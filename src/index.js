@@ -3,14 +3,35 @@
 
 import { Five9Error } from './five9.js';
 import { toolDefs, callTool } from './tools.js';
+import { handleOAuth, checkAuth, unauthorized } from './oauth.js';
+import { INSTRUCTIONS } from './about.js';
 
-const SERVER_INFO = { name: 'five9-mcp', version: '0.1.0' };
+const SERVER_INFO = { name: 'five9-mcp', version: '0.2.0' };
 const PROTOCOL_VERSIONS = ['2025-06-18', '2025-03-26', '2024-11-05'];
+
+const CORS_HEADERS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, Mcp-Protocol-Version, Mcp-Session-Id',
+  'Access-Control-Max-Age': '86400',
+};
 
 export default {
   async fetch(request, env) {
+    const res = await route(request, env);
+    for (const [k, v] of Object.entries(CORS_HEADERS)) res.headers.set(k, v);
+    return res;
+  },
+};
+
+async function route(request, env) {
     const url = new URL(request.url);
     const path = url.pathname.replace(/\/+$/, '') || '/';
+
+    if (request.method === 'OPTIONS') return new Response(null, { status: 204 });
+
+    const oauthRes = await handleOAuth(request, env, url);
+    if (oauthRes) return oauthRes;
 
     if (request.method === 'GET' && path === '/') return infoPage();
     if (request.method === 'GET' && path === '/health') return json({ ok: true, server: SERVER_INFO });
@@ -19,12 +40,7 @@ export default {
       if (request.method !== 'POST') {
         return json({ error: 'MCP requests must be POSTed to /mcp' }, 405);
       }
-      if (env.MCP_AUTH_TOKEN) {
-        const auth = request.headers.get('Authorization') || '';
-        if (auth !== `Bearer ${env.MCP_AUTH_TOKEN}`) {
-          return json({ error: 'Unauthorized — send Authorization: Bearer <MCP_AUTH_TOKEN>' }, 401);
-        }
-      }
+      if (!(await checkAuth(request, env))) return unauthorized(url.origin);
       let body;
       try { body = await request.json(); } catch {
         return json(rpcError(null, -32700, 'Parse error: body must be JSON'), 400);
@@ -38,8 +54,7 @@ export default {
     }
 
     return json({ error: 'Not found' }, 404);
-  },
-};
+}
 
 async function handleMessage(msg, env) {
   if (!msg || typeof msg !== 'object' || msg.jsonrpc !== '2.0') {
@@ -58,6 +73,7 @@ async function handleMessage(msg, env) {
           protocolVersion: PROTOCOL_VERSIONS.includes(requested) ? requested : PROTOCOL_VERSIONS[0],
           capabilities: { tools: {} },
           serverInfo: SERVER_INFO,
+          instructions: INSTRUCTIONS,
         });
       }
       case 'ping':

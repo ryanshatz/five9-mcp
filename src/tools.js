@@ -2,8 +2,16 @@
 // calls and returns plain JSON for the model.
 
 import { Five9Client } from './five9.js';
+import { ABOUT } from './about.js';
 
 export const TOOLS = [
+  {
+    name: 'about',
+    description: 'Who operates this server, why it exists, and how to work with it. Call this when you need context about the operator or ground rules.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    five9: false,
+    handler: () => ABOUT,
+  },
   {
     name: 'check_connection',
     description: 'Verify that the Worker can authenticate to Five9. Returns the number of skills visible to the configured user. Run this first if other tools are failing.',
@@ -141,6 +149,152 @@ export const TOOLS = [
     handler: (f9, a) => f9.getReportResult(a.identifier),
   },
   {
+    name: 'list_contact_fields',
+    description: 'List the contact field definitions on this Five9 domain (name, type, restrictions). Call this to learn valid field names before add_record_to_list, update_contact, or search_contacts.',
+    inputSchema: {
+      type: 'object',
+      properties: { pattern: { type: 'string', description: 'Java-style regex on field name (default ".*" = all)' } },
+      additionalProperties: false,
+    },
+    handler: (f9, a) => f9.getContactFields(a.pattern || '.*'),
+  },
+  {
+    name: 'update_contact',
+    description: 'Update an existing Five9 CRM contact. "key" identifies the contact (e.g. {"number1": "5551234567"}), "fields" holds the new values. Does not create contacts (use add_record_to_list for that). Default update_mode UPDATE_SOLE_MATCHES only updates when exactly one contact matches the key.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        key: { type: 'object', description: 'Field name → value identifying the contact', additionalProperties: { type: 'string' } },
+        fields: { type: 'object', description: 'Field name → new value', additionalProperties: { type: 'string' } },
+        update_mode: { type: 'string', enum: ['UPDATE_SOLE_MATCHES', 'UPDATE_FIRST', 'UPDATE_ALL'], description: 'How to handle multiple matches (default UPDATE_SOLE_MATCHES)' },
+      },
+      required: ['key', 'fields'],
+      additionalProperties: false,
+    },
+    handler: (f9, a) => f9.updateContact(a.key, a.fields, a.update_mode || 'UPDATE_SOLE_MATCHES'),
+  },
+  {
+    name: 'delete_record_from_list',
+    description: 'Remove records matching the given field values from a Five9 dialing list, e.g. {"number1": "5551234567"}. Only removes them from the list — CRM contacts are untouched.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        list_name: { type: 'string', description: 'Exact dialing list name' },
+        fields: { type: 'object', description: 'Field name → value to match', additionalProperties: { type: 'string' } },
+      },
+      required: ['list_name', 'fields'],
+      additionalProperties: false,
+    },
+    handler: (f9, a) => f9.deleteRecordFromList(a.list_name, a.fields),
+  },
+  {
+    name: 'get_import_result',
+    description: 'Check the outcome of an asynchronous Five9 import started by add_record_to_list (type "list") or a CRM update (type "crm"). Pass the importIdentifier returned by that call.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        identifier: { type: 'string', description: 'Import identifier (UUID) returned by the import call' },
+        type: { type: 'string', enum: ['list', 'crm'], description: 'Which import pipeline to query (default list)' },
+      },
+      required: ['identifier'],
+      additionalProperties: false,
+    },
+    handler: (f9, a) => f9.getImportResult(a.identifier, a.type || 'list'),
+  },
+  {
+    name: 'create_list',
+    description: 'Create a new (empty) Five9 dialing list.',
+    inputSchema: {
+      type: 'object',
+      properties: { list_name: { type: 'string', description: 'Name for the new list' } },
+      required: ['list_name'],
+      additionalProperties: false,
+    },
+    handler: (f9, a) => f9.createList(a.list_name),
+  },
+  {
+    name: 'delete_list',
+    description: 'Permanently delete a Five9 dialing list (its records leave the list; CRM contacts are untouched). Confirm with the user before calling.',
+    inputSchema: {
+      type: 'object',
+      properties: { list_name: { type: 'string', description: 'Exact name of the list to delete' } },
+      required: ['list_name'],
+      additionalProperties: false,
+    },
+    handler: (f9, a) => f9.deleteList(a.list_name),
+  },
+  {
+    name: 'inspect_campaign',
+    description: 'Get a campaign\'s current state plus its attached dialing lists (outbound) and DNIS numbers (inbound) in one call.',
+    inputSchema: {
+      type: 'object',
+      properties: { campaign_name: { type: 'string', description: 'Exact campaign name' } },
+      required: ['campaign_name'],
+      additionalProperties: false,
+    },
+    handler: (f9, a) => f9.inspectCampaign(a.campaign_name),
+  },
+  {
+    name: 'manage_campaign_lists',
+    description: 'Attach a dialing list to an outbound campaign (action "add", with optional priority) or detach it (action "remove"). Changes what the campaign will dial — confirm with the user first.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['add', 'remove'] },
+        campaign_name: { type: 'string', description: 'Exact outbound campaign name' },
+        list_name: { type: 'string', description: 'Exact dialing list name' },
+        priority: { type: 'number', description: 'Dialing priority when adding (default 1; lower = dialed first)' },
+      },
+      required: ['action', 'campaign_name', 'list_name'],
+      additionalProperties: false,
+    },
+    handler: (f9, a) => f9.manageCampaignLists(a.action, a.campaign_name, a.list_name, a.priority),
+  },
+  {
+    name: 'manage_dnc',
+    description: 'Work with the domain Do-Not-Call list: action "check" returns which of the given numbers are on the DNC, "add" adds numbers (compliance-safe), "remove" takes them off. Removing from DNC has compliance implications — confirm with the user first.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['check', 'add', 'remove'] },
+        numbers: { type: 'array', items: { type: 'string' }, description: 'Phone numbers (digits only, e.g. "5551234567")' },
+      },
+      required: ['action', 'numbers'],
+      additionalProperties: false,
+    },
+    handler: (f9, a) => f9.dnc(a.action, a.numbers),
+  },
+  {
+    name: 'list_agent_groups',
+    description: 'List Five9 agent groups and their member usernames. Optional regex pattern filters by group name.',
+    inputSchema: {
+      type: 'object',
+      properties: { pattern: { type: 'string', description: 'Java-style regex on group name (default ".*" = all)' } },
+      additionalProperties: false,
+    },
+    handler: (f9, a) => f9.getAgentGroups(a.pattern || '.*'),
+  },
+  {
+    name: 'list_ivr_scripts',
+    description: 'List IVR scripts on the domain (metadata only — script XML bodies are omitted). Optional regex pattern filters by script name.',
+    inputSchema: {
+      type: 'object',
+      properties: { pattern: { type: 'string', description: 'Java-style regex on script name (default ".*" = all)' } },
+      additionalProperties: false,
+    },
+    handler: (f9, a) => f9.getIVRScripts(a.pattern || '.*'),
+  },
+  {
+    name: 'list_dnis',
+    description: 'List the DNIS (inbound phone numbers) provisioned on this Five9 domain. Set unassigned_only to true to see only numbers not attached to any campaign.',
+    inputSchema: {
+      type: 'object',
+      properties: { unassigned_only: { type: 'boolean', description: 'Only return DNIS not assigned to a campaign' } },
+      additionalProperties: false,
+    },
+    handler: (f9, a) => f9.getDNISList(a.unassigned_only),
+  },
+  {
     name: 'get_realtime_stats',
     description: 'Get real-time contact center statistics from the Five9 Statistics API. statistic_type picks the view: AgentState (who is on a call / ready / not ready right now), ACDStatus (queue depth and wait times per skill), CampaignState, InboundCampaignStatistics, OutboundCampaignStatistics, AgentStatistics (per-agent daily performance).',
     inputSchema: {
@@ -165,6 +319,6 @@ export function toolDefs() {
 export async function callTool(env, name, args) {
   const tool = TOOLS.find((t) => t.name === name);
   if (!tool) throw new Error(`Unknown tool: ${name}`);
-  const f9 = new Five9Client(env);
+  const f9 = tool.five9 === false ? null : new Five9Client(env);
   return tool.handler(f9, args || {});
 }
