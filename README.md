@@ -12,7 +12,9 @@ An open-source [MCP](https://modelcontextprotocol.io) server that connects Claud
 [![MCP](https://img.shields.io/badge/protocol-MCP%20streamable%20HTTP-0ea5e9)](https://modelcontextprotocol.io)
 [![Tools](https://img.shields.io/badge/tools-25-8b5cf6)](#-the-toolbox-25-tools)
 
-[Quick start](#-quick-start) · [Connect Claude](#connect-claude-web--desktop) · [Connect ChatGPT](#connect-chatgpt) · [Tools](#-the-toolbox-25-tools) · [Architecture](#%EF%B8%8F-architecture)
+[Quick start](#-quick-start--no-terminal-needed) · [Connect Claude](#connect-claude-web--desktop) · [Connect ChatGPT](#connect-chatgpt) · [Tools](#-the-toolbox-25-tools) · [Architecture](#%EF%B8%8F-architecture)
+
+<img src="docs/landing.png" alt="five9-mcp landing page" width="820">
 
 </div>
 
@@ -41,6 +43,11 @@ Deploy it and your Worker serves more than an API:
 
 The console is the fastest way to sanity-check credentials, explore what each tool returns, or debug a campaign — no AI required.
 
+<div align="center">
+<img src="docs/console.png" alt="The interactive console running check_connection against a live Five9 domain" width="820">
+<br><em>The console running <code>check_connection</code> against a live Five9 domain</em>
+</div>
+
 ## 🚀 Quick start — no terminal needed
 
 You need a free Cloudflare account and a Five9 user with API access — **create a dedicated Five9 API user** scoped to what you want an AI to do, don't reuse a personal admin login.
@@ -54,6 +61,10 @@ Sign in to Cloudflare and click through — it creates your own copy of this Wor
 **2 — Run the setup wizard** *(in your browser)*
 
 Open **`/setup`** on your new server. Enter your Five9 username, password, and region — the wizard **verifies them live against Five9** before saving, then hands you your **access key** (shown once — store it in a password manager).
+
+<div align="center">
+<img src="docs/setup-wizard.png" alt="The in-browser setup wizard" width="720">
+</div>
 
 **3 — Connect your AI** (walkthroughs below), then ask it to *"check the connection and list my campaigns."* 🎉
 
