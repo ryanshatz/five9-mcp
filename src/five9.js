@@ -79,6 +79,86 @@ export function toArray(v) {
 
 export class Five9Error extends Error {}
 
+// ---- Generic ordered XML serialization ----
+//
+// Five9's JAXB endpoints validate child-element order against the WSDL
+// <xs:sequence>. ELEMENT_ORDERS pins the order for every complex type we
+// write, keyed by the ELEMENT NAME as it appears in the request. Objects
+// parsed from Five9 responses already arrive in schema order, so
+// read-modify-write round-trips stay valid automatically.
+
+const TIMER = ['days', 'hours', 'minutes', 'seconds'];
+const CAMPAIGN_BASE = ['description', 'mode', 'name', 'profileName', 'state', 'trainingMode', 'type'];
+const CAMPAIGN_GENERAL = ['autoRecord', 'callWrapup', 'ftpHost', 'ftpPassword', 'ftpUser', 'recordingNameAsSid', 'useFtp'];
+const CAMPAIGN_BASE_OUTBOUND = ['analyzeLevel', 'CRMRedialTimeout', 'dnisAsAni', 'enableListDialingRatios', 'listDialingMode', 'noOutOfNumbersAlert', 'stateDialingRule', 'timeZoneAssignment'];
+const CAMPAIGN_OUTBOUND_EXT = ['actionOnAnswerMachine', 'actionOnQueueExpiration', 'callAnalysisMode', 'callsAgentRatio', 'dialNumberOnTimeout', 'dialingMode', 'dialingPriority', 'dialingRatio', 'distributionAlgorithm', 'distributionTimeFrame', 'limitPreviewTime', 'maxDroppedCallsPercentage', 'maxPreviewTime', 'maxQueueTime', 'monitorDroppedCalls', 'previewDialImmediately', 'useTelemarketingMaxQueTimeEq1'];
+export const OUTBOUND_CAMPAIGN_ORDER = [...CAMPAIGN_BASE, ...CAMPAIGN_GENERAL, ...CAMPAIGN_BASE_OUTBOUND, ...CAMPAIGN_OUTBOUND_EXT];
+export const INBOUND_CAMPAIGN_ORDER = [...CAMPAIGN_BASE, ...CAMPAIGN_GENERAL, 'defaultIvrSchedule', 'maxNumOfLines'];
+
+const ELEMENT_ORDERS = {
+  defaultIvrSchedule: ['ivrSchedule', 'visualModeSettings'],
+  ivrSchedule: ['name', 'scriptName', 'scriptParameters'],
+  actionOnAnswerMachine: ['actionArgument', 'actionType', 'maxWaitTime'],
+  actionOnQueueExpiration: ['actionArgument', 'actionType', 'maxWaitTime'],
+  maxWaitTime: TIMER,
+  timer: TIMER,
+  timeout: TIMER,
+  maxPreviewTime: TIMER,
+  maxQueueTime: TIMER,
+  CRMRedialTimeout: TIMER,
+  callWrapup: ['agentNotReady', 'dispostionName', 'enabled', 'reasonCodeName', 'timeout'],
+  typeParameters: ['allowChangeTimer', 'attempts', 'timer', 'useTimer'],
+  campaignProfile: ['ANI', 'description', 'dialingSchedule', 'dialingTimeout', 'initialCallPriority', 'maxCharges', 'name', 'numberOfAttempts'],
+  group: ['agents', 'description', 'id', 'name'],
+  skill: ['description', 'id', 'messageOfTheDay', 'name', 'routeVoiceMails'],
+  skillInfo: ['skill', 'users'],
+  userSkill: ['id', 'level', 'skillName', 'userName'],
+  users: ['id', 'level', 'skillName', 'userName'],
+  generalInfo: ['active', 'canChangePassword', 'EMail', 'extension', 'federationId', 'firstName', 'fullName', 'IEXScheduled', 'id', 'lastName', 'locale', 'mediaTypeConfig', 'mustChangePassword', 'osLogin', 'password', 'phoneNumber', 'startDate', 'unifiedCommunicationId', 'userName', 'userProfileName'],
+  userGeneralInfo: ['active', 'canChangePassword', 'EMail', 'extension', 'federationId', 'firstName', 'fullName', 'IEXScheduled', 'id', 'lastName', 'locale', 'mediaTypeConfig', 'mustChangePassword', 'osLogin', 'password', 'phoneNumber', 'startDate', 'unifiedCommunicationId', 'userName', 'userProfileName'],
+  userInfo: ['agentGroups', 'cannedReports', 'generalInfo', 'roles', 'skills'],
+  roles: ['admin', 'agent', 'crmManager', 'reporting', 'supervisor'],
+  rolesToSet: ['admin', 'agent', 'crmManager', 'reporting', 'supervisor'],
+  agent: ['alwaysRecorded', 'attachVmToEmail', 'permissions', 'sendEmailOnVm'],
+  disposition: ['agentMustCompleteWorksheet', 'agentMustConfirm', 'description', 'name', 'resetAttemptsCounter', 'sendEmailNotification', 'sendIMNotification', 'trackAsFirstCallResolution', 'type', 'typeParameters'],
+  field: ['displayAs', 'mapTo', 'name', 'restrictions', 'system', 'type'],
+  prompt: ['description', 'languages', 'name', 'type'],
+  ttsInfo: ['language', 'sayAs', 'sayAsFormat', 'text', 'voice'],
+  scriptDef: ['description', 'name', 'xmlDefinition'],
+  callVariable: ['applyToAllDispositions', 'defaultValue', 'description', 'dispositions', 'group', 'name', 'reporting', 'restrictions', 'sensitiveData', 'type'],
+  variable: ['applyToAllDispositions', 'defaultValue', 'description', 'dispositions', 'group', 'name', 'reporting', 'restrictions', 'sensitiveData', 'type'],
+  reasonCode: ['enabled', 'name', 'paidTime', 'shortcut', 'type'],
+  speedDialNumber: ['code', 'description', 'number'],
+  spd: ['code', 'description', 'number'],
+};
+
+// Serializes a plain JS value to XML under the given element name, applying
+// the pinned child order when one is known for that element name.
+export function xmlOf(value, name, order) {
+  if (value === null || value === undefined) return '';
+  if (Array.isArray(value)) return value.map((v) => xmlOf(v, name)).join('');
+  if (typeof value === 'object') {
+    const ord = order || ELEMENT_ORDERS[name] || Object.keys(value);
+    const keys = [...ord.filter((k) => k in value), ...Object.keys(value).filter((k) => !ord.includes(k))];
+    const inner = keys.map((k) => xmlOf(value[k], k)).join('');
+    return `<${name}>${inner}</${name}>`;
+  }
+  return `<${name}>${escapeXml(value)}</${name}>`;
+}
+
+// Merge scalar/nested changes into a fetched object (case-tolerant on keys).
+export function mergeChanges(base, changes) {
+  const out = { ...base };
+  for (const [k, v] of Object.entries(changes || {})) {
+    if (v === undefined) continue;
+    const existing = Object.keys(out).find((x) => x.toLowerCase() === k.toLowerCase()) || k;
+    out[existing] = (v && typeof v === 'object' && !Array.isArray(v) && typeof out[existing] === 'object' && out[existing] !== null)
+      ? mergeChanges(out[existing], v)
+      : v;
+  }
+  return out;
+}
+
 export class Five9Client {
   // cfg: { username, password, host, adminVersion, supervisorVersion } — see config.js
   constructor(cfg) {
@@ -137,9 +217,9 @@ export class Five9Client {
   }
 
   async controlCampaign(action, campaignName) {
-    const methods = { start: 'startCampaign', stop: 'stopCampaign', reset: 'resetCampaign' };
+    const methods = { start: 'startCampaign', stop: 'stopCampaign', force_stop: 'forceStopCampaign', reset: 'resetCampaign', reset_list_positions: 'resetListPosition' };
     const method = methods[action];
-    if (!method) throw new Five9Error(`Unknown campaign action "${action}" — use start, stop, or reset.`);
+    if (!method) throw new Five9Error(`Unknown campaign action "${action}" — use start, stop, force_stop, reset, or reset_list_positions.`);
     await this.admin(method, `<campaignName>${escapeXml(campaignName)}</campaignName>`);
     return { ok: true, action, campaign: campaignName };
   }
@@ -346,6 +426,440 @@ export class Five9Client {
   async getDNISList(selectUnassigned) {
     const inner = selectUnassigned === undefined ? '' : `<selectUnassigned>${!!selectUnassigned}</selectUnassigned>`;
     const r = await this.admin('getDNISList', inner);
+    return toArray(r.return);
+  }
+
+  // ---- Campaign CRUD ----
+
+  // Full campaign configuration. Tries outbound, then inbound, then autodial.
+  async getCampaignDetails(name) {
+    const arg = `<campaignName>${escapeXml(name)}</campaignName>`;
+    for (const [kind, method] of [['outbound', 'getOutboundCampaign'], ['inbound', 'getInboundCampaign'], ['autodial', 'getAutodialCampaign']]) {
+      try {
+        const r = await this.admin(method, arg);
+        return { campaignKind: kind, ...(r.return || {}) };
+      } catch (e) {
+        if (!/should be one of|WrongCampaignType/i.test(e.message)) throw e;
+      }
+    }
+    throw new Five9Error(`Campaign "${name}" was not found as outbound, inbound, or autodial.`);
+  }
+
+  async createCampaign(type, fields) {
+    const f = fields || {};
+    if (!f.name) throw new Five9Error('name is required.');
+    const mode = (f.mode || 'BASIC').toUpperCase();
+    if (mode === 'ADVANCED' && !f.profileName) {
+      throw new Five9Error('ADVANCED campaigns require profileName (see list_campaign_profiles).');
+    }
+    const base = {
+      description: f.description, mode, name: f.name,
+      profileName: f.profileName, trainingMode: f.trainingMode ?? false,
+    };
+    if (type === 'outbound') {
+      const campaign = mergeChanges(base, {
+        autoRecord: f.autoRecord,
+        // Five9 requires answer-machine and queue-expiration actions on
+        // create; default to DROP_CALL so no prompt is needed.
+        actionOnAnswerMachine: f.actionOnAnswerMachine || { actionType: 'DROP_CALL' },
+        actionOnQueueExpiration: f.actionOnQueueExpiration || { actionType: 'DROP_CALL', maxWaitTime: { days: 0, hours: 0, minutes: 0, seconds: 60 } },
+        dialingMode: f.dialingMode,      // PREDICTIVE | PROGRESSIVE | PREVIEW | POWER
+        callsAgentRatio: f.callsAgentRatio,
+        maxDroppedCallsPercentage: f.maxDroppedCallsPercentage,
+        monitorDroppedCalls: f.monitorDroppedCalls,
+      });
+      await this.admin('createOutboundCampaign', xmlOf(campaign, 'campaign', OUTBOUND_CAMPAIGN_ORDER));
+    } else if (type === 'inbound') {
+      if (!f.ivrScript) {
+        throw new Five9Error('Inbound campaigns require ivr_script (the IVR script that answers calls) — pick one from list_ivr_scripts.');
+      }
+      const campaign = mergeChanges(base, {
+        autoRecord: f.autoRecord,
+        defaultIvrSchedule: { ivrSchedule: { scriptName: f.ivrScript } },
+        maxNumOfLines: f.maxNumOfLines ?? 10,
+      });
+      await this.admin('createInboundCampaign', xmlOf(campaign, 'campaign', INBOUND_CAMPAIGN_ORDER));
+    } else {
+      throw new Five9Error(`Unsupported campaign type "${type}" — use outbound or inbound.`);
+    }
+    return { ok: true, created: f.name, type, mode };
+  }
+
+  // Read-modify-write: fetch the full campaign, merge the changes, send the
+  // whole object back in schema order.
+  async modifyCampaign(name, changes) {
+    const details = await this.getCampaignDetails(name);
+    const { campaignKind, ...current } = details;
+    if (campaignKind === 'autodial') throw new Five9Error('Editing autodial campaigns is not supported yet.');
+    delete current.state; // state changes go through control_campaign
+    const merged = mergeChanges(current, changes);
+    if (campaignKind === 'outbound') {
+      await this.admin('modifyOutboundCampaign', xmlOf(merged, 'campaign', OUTBOUND_CAMPAIGN_ORDER));
+    } else {
+      await this.admin('modifyInboundCampaign', xmlOf(merged, 'campaign', INBOUND_CAMPAIGN_ORDER));
+    }
+    return { ok: true, campaign: name, kind: campaignKind, applied: Object.keys(changes || {}) };
+  }
+
+  async renameCampaign(name, newName) {
+    await this.admin('renameCampaign', `<campaignName>${escapeXml(name)}</campaignName><campaignNewName>${escapeXml(newName)}</campaignNewName>`);
+    return { ok: true, from: name, to: newName };
+  }
+
+  async deleteCampaign(name) {
+    await this.admin('deleteCampaign', `<campaignName>${escapeXml(name)}</campaignName>`);
+    return { ok: true, deleted: name };
+  }
+
+  // ---- Campaign associations ----
+
+  async manageCampaignSkills(action, campaignName, skills) {
+    const method = { add: 'addSkillsToCampaign', remove: 'removeSkillsFromCampaign' }[action];
+    if (!method) throw new Five9Error(`Unknown action "${action}" — use add or remove.`);
+    const inner = `<campaignName>${escapeXml(campaignName)}</campaignName>` + toArray(skills).map((s) => `<skills>${escapeXml(s)}</skills>`).join('');
+    await this.admin(method, inner);
+    return { ok: true, action, campaign: campaignName, skills: toArray(skills) };
+  }
+
+  async manageCampaignDnis(action, campaignName, dnis) {
+    const method = { add: 'addDNISToCampaign', remove: 'removeDNISFromCampaign' }[action];
+    if (!method) throw new Five9Error(`Unknown action "${action}" — use add or remove.`);
+    const inner = `<campaignName>${escapeXml(campaignName)}</campaignName>` + toArray(dnis).map((d) => `<DNISList>${escapeXml(d)}</DNISList>`).join('');
+    await this.admin(method, inner);
+    return { ok: true, action, campaign: campaignName, dnis: toArray(dnis) };
+  }
+
+  async manageCampaignDispositions(action, campaignName, dispositions) {
+    const method = { add: 'addDispositionsToCampaign', remove: 'removeDispositionsFromCampaign' }[action];
+    if (!method) throw new Five9Error(`Unknown action "${action}" — use add or remove.`);
+    const inner = `<campaignName>${escapeXml(campaignName)}</campaignName>` + toArray(dispositions).map((d) => `<dispositions>${escapeXml(d)}</dispositions>`).join('');
+    await this.admin(method, inner);
+    return { ok: true, action, campaign: campaignName, dispositions: toArray(dispositions) };
+  }
+
+  // ---- Campaign profiles ----
+
+  async getCampaignProfiles(pattern = '.*') {
+    const r = await this.admin('getCampaignProfiles', `<namePattern>${escapeXml(pattern)}</namePattern>`);
+    return toArray(r.return);
+  }
+
+  async createCampaignProfile(fields) {
+    if (!fields?.name) throw new Five9Error('name is required.');
+    await this.admin('createCampaignProfile', xmlOf(fields, 'campaignProfile'));
+    return { ok: true, created: fields.name };
+  }
+
+  async modifyCampaignProfile(name, changes) {
+    const all = await this.getCampaignProfiles(name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    const current = all.find((p) => p.name === name);
+    if (!current) throw new Five9Error(`Campaign profile "${name}" not found.`);
+    const merged = mergeChanges(current, changes);
+    await this.admin('modifyCampaignProfile', xmlOf(merged, 'campaignProfile'));
+    return { ok: true, profile: name, applied: Object.keys(changes || {}) };
+  }
+
+  async deleteCampaignProfile(name) {
+    await this.admin('deleteCampaignProfile', `<profileName>${escapeXml(name)}</profileName>`);
+    return { ok: true, deleted: name };
+  }
+
+  // ---- Skills ----
+
+  async getSkillDetails(pattern = '.*') {
+    const r = await this.admin('getSkillsInfo', `<skillNamePattern>${escapeXml(pattern)}</skillNamePattern>`);
+    return toArray(r.return);
+  }
+
+  async createSkill(fields) {
+    if (!fields?.name) throw new Five9Error('name is required.');
+    const skill = { description: fields.description, messageOfTheDay: fields.messageOfTheDay, name: fields.name, routeVoiceMails: fields.routeVoiceMails ?? false };
+    await this.admin('createSkill', xmlOf({ skill }, 'skillInfo'));
+    return { ok: true, created: fields.name };
+  }
+
+  async modifySkill(name, changes) {
+    const skills = await this.getSkills(name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    const current = skills.find((s) => s.name === name);
+    if (!current) throw new Five9Error(`Skill "${name}" not found.`);
+    const merged = mergeChanges(current, changes);
+    await this.admin('modifySkill', xmlOf(merged, 'skill'));
+    return { ok: true, skill: name, applied: Object.keys(changes || {}) };
+  }
+
+  async deleteSkill(name) {
+    await this.admin('deleteSkill', `<skillName>${escapeXml(name)}</skillName>`);
+    return { ok: true, deleted: name };
+  }
+
+  async manageUserSkill(action, userName, skillName, level = 1) {
+    const method = { add: 'userSkillAdd', set_level: 'userSkillModify', remove: 'userSkillRemove' }[action];
+    if (!method) throw new Five9Error(`Unknown action "${action}" — use add, set_level, or remove.`);
+    const userSkill = { level: Number(level) || 1, skillName, userName };
+    await this.admin(method, xmlOf(userSkill, 'userSkill'));
+    return { ok: true, action, user: userName, skill: skillName, level: userSkill.level };
+  }
+
+  // ---- Users ----
+
+  async getUserDetails(userName) {
+    const r = await this.admin('getUserInfo', `<userName>${escapeXml(userName)}</userName>`);
+    return r.return || {};
+  }
+
+  async createUser(fields) {
+    const f = fields || {};
+    if (!f.userName || !f.password || !f.firstName || !f.lastName || !f.email) {
+      throw new Five9Error('userName, password, firstName, lastName, and email are required.');
+    }
+    const generalInfo = {
+      active: f.active ?? true, canChangePassword: true, EMail: f.email,
+      extension: f.extension, firstName: f.firstName, lastName: f.lastName,
+      mustChangePassword: f.mustChangePassword ?? true, password: f.password,
+      phoneNumber: f.phoneNumber, userName: f.userName, userProfileName: f.userProfileName,
+    };
+    const roles = {};
+    const wanted = toArray(f.roles?.length ? f.roles : ['agent']).map((x) => String(x).toLowerCase());
+    if (wanted.includes('admin')) roles.admin = { permissions: [] };
+    if (wanted.includes('agent')) roles.agent = { alwaysRecorded: false, attachVmToEmail: false, sendEmailOnVm: false };
+    if (wanted.includes('reporting')) roles.reporting = { permissions: [] };
+    if (wanted.includes('supervisor')) roles.supervisor = { permissions: [] };
+    const userInfo = { generalInfo, roles };
+    if (f.agentGroups) userInfo.agentGroups = toArray(f.agentGroups);
+    if (f.skills) userInfo.skills = toArray(f.skills).map((s) => (typeof s === 'string' ? { level: 1, skillName: s, userName: f.userName } : { level: s.level ?? 1, skillName: s.name || s.skillName, userName: f.userName }));
+    const r = await this.admin('createUser', xmlOf(userInfo, 'userInfo'));
+    return { ok: true, created: f.userName, roles: Object.keys(roles), result: r.return ? { userName: r.return.generalInfo?.userName, id: r.return.generalInfo?.id } : null };
+  }
+
+  async modifyUser(userName, changes) {
+    const r = await this.admin('getUserGeneralInfo', `<userName>${escapeXml(userName)}</userName>`);
+    const current = r.return;
+    if (!current) throw new Five9Error(`User "${userName}" not found.`);
+    const merged = mergeChanges(current, changes);
+    delete merged.fullName; // derived field — Five9 rejects it on modify
+    await this.admin('modifyUser', xmlOf(merged, 'userGeneralInfo'));
+    return { ok: true, user: userName, applied: Object.keys(changes || {}) };
+  }
+
+  async deleteUser(userName) {
+    await this.admin('deleteUser', `<userName>${escapeXml(userName)}</userName>`);
+    return { ok: true, deleted: userName };
+  }
+
+  async getUserProfiles(pattern = '.*') {
+    const r = await this.admin('getUserProfiles', `<userProfileNamePatern>${escapeXml(pattern)}</userProfileNamePatern>`);
+    return toArray(r.return);
+  }
+
+  // ---- Dispositions ----
+
+  async createDisposition(fields) {
+    if (!fields?.name || !fields?.type) throw new Five9Error('name and type are required (see list_dispositions for type examples like FinalDisp, RedialNumber, DoNotDial).');
+    await this.admin('createDisposition', xmlOf(fields, 'disposition'));
+    return { ok: true, created: fields.name, type: fields.type };
+  }
+
+  async modifyDisposition(name, changes) {
+    const r = await this.admin('getDisposition', `<dispositionName>${escapeXml(name)}</dispositionName>`);
+    const current = r.return;
+    if (!current) throw new Five9Error(`Disposition "${name}" not found.`);
+    // Five9 rejects round-tripped system fields here — send a sparse object:
+    // the identifying name + type plus only the changed fields.
+    const merged = mergeChanges({ name: current.name, type: current.type, typeParameters: current.typeParameters }, changes);
+    await this.admin('modifyDisposition', xmlOf(merged, 'disposition'));
+    return { ok: true, disposition: name, applied: Object.keys(changes || {}) };
+  }
+
+  async renameDisposition(name, newName) {
+    await this.admin('renameDisposition', `<dispositionName>${escapeXml(name)}</dispositionName><dispositionNewName>${escapeXml(newName)}</dispositionNewName>`);
+    return { ok: true, from: name, to: newName };
+  }
+
+  async deleteDisposition(name) {
+    await this.admin('removeDisposition', `<dispositionName>${escapeXml(name)}</dispositionName>`);
+    return { ok: true, deleted: name };
+  }
+
+  // ---- Contact fields & CRM delete ----
+
+  async createContactField(fields) {
+    if (!fields?.name || !fields?.type) throw new Five9Error('name and type are required.');
+    const field = { displayAs: fields.displayAs || 'Short', mapTo: fields.mapTo, name: fields.name, system: false, type: fields.type };
+    await this.admin('createContactField', xmlOf(field, 'field'));
+    return { ok: true, created: fields.name, type: fields.type };
+  }
+
+  async deleteContactField(name) {
+    await this.admin('deleteContactField', `<fieldName>${escapeXml(name)}</fieldName>`);
+    return { ok: true, deleted: name };
+  }
+
+  async deleteContact(criteria) {
+    const names = Object.keys(criteria || {});
+    if (!names.length) throw new Five9Error('criteria must contain at least one field (e.g. {"number1": "5551234567"}).');
+    const mappings = names.map((n, i) =>
+      `<fieldsMapping><columnNumber>${i + 1}</columnNumber><fieldName>${escapeXml(n)}</fieldName><key>true</key></fieldsMapping>`).join('');
+    const csvLine = names.map((n) => {
+      const v = String(criteria[n] ?? '');
+      return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+    }).join(',');
+    const r = await this.admin('deleteFromContactsCsv',
+      `<crmDeleteSettings>${mappings}<skipHeaderLine>false</skipHeaderLine>` +
+      `<crmDeleteMode>DELETE_SOLE_MATCHES</crmDeleteMode></crmDeleteSettings>` +
+      `<csvData>${escapeXml(csvLine)}</csvData>`);
+    return { ok: true, result: r.return ?? null, note: 'DELETE_SOLE_MATCHES: contacts are only deleted when exactly one record matches the criteria.' };
+  }
+
+  // ---- Prompts ----
+
+  async getPrompts() {
+    const r = await this.admin('getPrompts', '');
+    return toArray(r.return);
+  }
+
+  async manageTtsPrompt(action, fields) {
+    if (action === 'delete') {
+      await this.admin('deletePrompt', `<promptName>${escapeXml(fields.name)}</promptName>`);
+      return { ok: true, deleted: fields.name };
+    }
+    if (!fields?.name || !fields?.text) throw new Five9Error('name and text are required.');
+    const method = { create: 'addPromptTTS', modify: 'modifyPromptTTS' }[action];
+    if (!method) throw new Five9Error(`Unknown action "${action}" — use create, modify, or delete.`);
+    const prompt = { description: fields.description, languages: fields.language || 'en-US', name: fields.name, type: 'TTSGenerated' };
+    const ttsInfo = { language: fields.language || 'en-US', text: fields.text, voice: fields.voice };
+    await this.admin(method, xmlOf(prompt, 'prompt') + xmlOf(ttsInfo, 'ttsInfo'));
+    return { ok: true, action, prompt: fields.name };
+  }
+
+  // ---- IVR scripts ----
+
+  async getIVRScript(name) {
+    const r = await this.admin('getIVRScripts', `<namePattern>${escapeXml(name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))}</namePattern>`);
+    const script = toArray(r.return).find((s) => s.name === name);
+    if (!script) throw new Five9Error(`IVR script "${name}" not found.`);
+    return script;
+  }
+
+  // ---- Agent groups ----
+
+  async manageAgentGroup(action, name, opts = {}) {
+    if (action === 'create') {
+      await this.admin('createAgentGroup', xmlOf({ description: opts.description, name }, 'group'));
+      return { ok: true, created: name };
+    }
+    if (action === 'delete') {
+      await this.admin('deleteAgentGroup', `<groupName>${escapeXml(name)}</groupName>`);
+      return { ok: true, deleted: name };
+    }
+    if (action === 'add_agents' || action === 'remove_agents') {
+      const groups = await this.getAgentGroups(name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+      const group = groups.find((g) => g.name === name);
+      if (!group) throw new Five9Error(`Agent group "${name}" not found.`);
+      const agents = toArray(opts.agents);
+      if (!agents.length) throw new Five9Error('agents must contain at least one username.');
+      const tag = action === 'add_agents' ? 'addAgents' : 'removeAgents';
+      await this.admin('modifyAgentGroup', xmlOf(group, 'group') + agents.map((a) => `<${tag}>${escapeXml(a)}</${tag}>`).join(''));
+      return { ok: true, action, group: name, agents };
+    }
+    throw new Five9Error(`Unknown action "${action}" — use create, delete, add_agents, or remove_agents.`);
+  }
+
+  // ---- Call variables ----
+
+  async getCallVariables(namePattern, groupName) {
+    const inner = (namePattern ? `<namePattern>${escapeXml(namePattern)}</namePattern>` : '') +
+      (groupName ? `<groupName>${escapeXml(groupName)}</groupName>` : '');
+    const r = await this.admin('getCallVariables', inner);
+    return toArray(r.return);
+  }
+
+  async getCallVariableGroups() {
+    const r = await this.admin('getCallVariableGroups', '');
+    return toArray(r.return);
+  }
+
+  async manageCallVariable(action, fields) {
+    if (action === 'delete') {
+      await this.admin('deleteCallVariable', `<name>${escapeXml(fields.name)}</name><groupName>${escapeXml(fields.group)}</groupName>`);
+      return { ok: true, deleted: `${fields.group}.${fields.name}` };
+    }
+    if (!fields?.name || !fields?.group) throw new Five9Error('name and group are required.');
+    if (action === 'create') {
+      const variable = { defaultValue: fields.defaultValue, description: fields.description, group: fields.group, name: fields.name, reporting: fields.reporting ?? false, type: fields.type || 'STRING' };
+      await this.admin('createCallVariable', xmlOf(variable, 'variable'));
+      return { ok: true, created: `${fields.group}.${fields.name}` };
+    }
+    throw new Five9Error(`Unknown action "${action}" — use create or delete.`);
+  }
+
+  // ---- Domain odds & ends ----
+
+  async getWebConnectors(pattern = '.*') {
+    const r = await this.admin('getWebConnectors', `<namePattern>${escapeXml(pattern)}</namePattern>`);
+    return toArray(r.return);
+  }
+
+  async manageSpeedDial(action, fields = {}) {
+    if (action === 'list') {
+      const r = await this.admin('getSpeedDialNumbers', '');
+      return toArray(r.return);
+    }
+    if (action === 'create') {
+      if (!fields.code || !fields.number) throw new Five9Error('code and number are required.');
+      // createSpeedDialNumber takes bare code/number/description elements.
+      await this.admin('createSpeedDialNumber',
+        `<code>${escapeXml(fields.code)}</code><number>${escapeXml(fields.number)}</number>` +
+        (fields.description ? `<description>${escapeXml(fields.description)}</description>` : ''));
+      return { ok: true, created: fields.code };
+    }
+    if (action === 'delete') {
+      await this.admin('removeSpeedDialNumber', `<code>${escapeXml(fields.code)}</code>`);
+      return { ok: true, deleted: fields.code };
+    }
+    throw new Five9Error(`Unknown action "${action}" — use list, create, or delete.`);
+  }
+
+  async manageReasonCode(action, fields = {}) {
+    if (action === 'get') {
+      if (!fields.name) throw new Five9Error('name is required — Five9 looks up reason codes by exact name (there is no list-all API).');
+      const types = fields.type ? [fields.type] : ['NotReady', 'Logout'];
+      const out = [];
+      for (const t of types) {
+        try {
+          const r = await this.admin('getReasonCodeByType',
+            `<reasonCodeName>${escapeXml(fields.name)}</reasonCodeName><type>${escapeXml(t)}</type>`);
+          out.push(...toArray(r.return).map((rc) => ({ ...rc, type: rc.type ?? t })));
+        } catch (e) {
+          if (!/doesn't exist/i.test(e.message)) throw e;
+        }
+      }
+      return { found: out.length > 0, reasonCodes: out };
+    }
+    if (action === 'create' || action === 'modify') {
+      if (!fields.name || !fields.type) throw new Five9Error('name and type (NotReady | Logout) are required.');
+      const rc = { enabled: fields.enabled ?? true, name: fields.name, paidTime: fields.paidTime ?? false, shortcut: fields.shortcut, type: fields.type };
+      await this.admin(action === 'create' ? 'createReasonCode' : 'modifyReasonCode', xmlOf(rc, 'reasonCode'));
+      return { ok: true, action, reasonCode: fields.name };
+    }
+    if (action === 'delete') {
+      await this.admin('deleteReasonCode', `<reasonCodeName>${escapeXml(fields.name)}</reasonCodeName>`);
+      return { ok: true, deleted: fields.name };
+    }
+    throw new Five9Error(`Unknown action "${action}" — use list, create, modify, or delete.`);
+  }
+
+  async getDialingRules() {
+    const r = await this.admin('getDialingRules', '');
+    return toArray(r.return);
+  }
+
+  async getVCCConfiguration() {
+    const r = await this.admin('getVCCConfiguration', '');
+    return r.return || {};
+  }
+
+  async getApiUsage() {
+    const r = await this.admin('getCallCountersState', '');
     return toArray(r.return);
   }
 

@@ -10,9 +10,9 @@ An open-source [MCP](https://modelcontextprotocol.io) server that connects Claud
 [![Runtime](https://img.shields.io/badge/Cloudflare-Workers-f38020?logo=cloudflare&logoColor=white)](https://workers.cloudflare.com)
 [![Dependencies](https://img.shields.io/badge/dependencies-0-16a34a)](package.json)
 [![MCP](https://img.shields.io/badge/protocol-MCP%20streamable%20HTTP-0ea5e9)](https://modelcontextprotocol.io)
-[![Tools](https://img.shields.io/badge/tools-25-8b5cf6)](#-the-toolbox-25-tools)
+[![Tools](https://img.shields.io/badge/tools-58-8b5cf6)](#-the-toolbox-58-tools)
 
-[Quick start](#-quick-start--no-terminal-needed) · [Connect Claude](#connect-claude-web--desktop) · [Connect ChatGPT](#connect-chatgpt) · [Tools](#-the-toolbox-25-tools) · [Architecture](#%EF%B8%8F-architecture)
+[Quick start](#-quick-start--no-terminal-needed) · [Connect Claude](#connect-claude-web--desktop) · [Connect ChatGPT](#connect-chatgpt) · [Tools](#-the-toolbox-58-tools) · [Architecture](#%EF%B8%8F-architecture)
 
 <img src="docs/landing.png" alt="five9-mcp landing page" width="820">
 
@@ -23,7 +23,9 @@ An open-source [MCP](https://modelcontextprotocol.io) server that connects Claud
 Ask your AI things like:
 
 > *"Who's on a call right now, and how deep is the sales queue?"* 📊
+> *"Create a preview campaign for the win-back list, attach the sales skill, and start it."* 🛠️
 > *"Stop the OUTBOUND_AGED campaign and add these 3 leads to the callback list."* 📞
+> *"Onboard the new agent: create the user, assign the billing skill at level 2."* 🧑‍💼
 > *"Is 555-867-5309 on our DNC? Check before anyone dials it."* 🚫
 > *"Pull yesterday's Call Log report and summarize abandon rates."* 📈
 
@@ -37,7 +39,7 @@ Deploy it and your Worker serves more than an API:
 |------|--------------|
 | `/` | A polished landing page: live server status, this setup guide, click-by-click AI connection walkthroughs, and the full tool catalog |
 | `/setup` | The **setup wizard** — enter Five9 credentials in your browser, get them verified live, receive your access key. No terminal, no secrets commands |
-| `/console` | An **interactive console** — paste your access key, pick any of the 25 tools, fill a generated form, and run it against your live Five9 domain right from the browser |
+| `/console` | An **interactive console** — paste your access key, pick any of the 58 tools, fill a generated form, and run it against your live Five9 domain right from the browser |
 | `/mcp` | The MCP endpoint itself (streamable HTTP, stateless) |
 | `/health` | JSON healthcheck |
 
@@ -160,7 +162,7 @@ curl -X POST https://<your-worker>.workers.dev/mcp \
 
 </details>
 
-## 🧰 The toolbox (25 tools)
+## 🧰 The toolbox (58 tools)
 
 🟢 = read (always safe) · ✏️ = write (changes your domain — the server tells AIs to confirm with you first)
 
@@ -171,6 +173,7 @@ curl -X POST https://<your-worker>.workers.dev/mcp \
 |--|------|--------------|
 | 🟢 | `about` | Operator context for the AI — who runs this server and the ground rules |
 | 🟢 | `check_connection` | Verify Five9 credentials work; returns visible skill count |
+| 🟢 | `get_api_usage` | Current Five9 API usage counters vs rate limits |
 
 </details>
 
@@ -179,10 +182,20 @@ curl -X POST https://<your-worker>.workers.dev/mcp \
 
 | | Tool | What it does |
 |--|------|--------------|
-| 🟢 | `list_campaigns` | List campaigns (name, type, state, mode), optional name regex |
-| 🟢 | `inspect_campaign` | One call: state + attached lists (outbound) + DNIS (inbound) |
-| ✏️ | `control_campaign` | Start / stop / reset a campaign |
-| ✏️ | `manage_campaign_lists` | Attach or detach a dialing list, with dialing priority |
+| 🟢 | `list_campaigns` | List campaigns (name, type, state, mode) |
+| 🟢 | `inspect_campaign` | State + attached lists + DNIS in one call |
+| 🟢 | `get_campaign_details` | FULL campaign config (dialing mode, ratios, recording, wrap-up…) |
+| ✏️ | `create_campaign` | Create outbound or inbound campaigns, BASIC or ADVANCED |
+| ✏️ | `modify_campaign` | Edit any campaign setting — read-modify-write, pass only the changes |
+| ✏️ | `rename_campaign` | Rename a campaign |
+| ✏️ | `delete_campaign` | Delete a campaign |
+| ✏️ | `control_campaign` | start / stop / force_stop / reset / reset_list_positions |
+| ✏️ | `manage_campaign_lists` | Attach/detach dialing lists with priority |
+| ✏️ | `manage_campaign_skills` | Add/remove routing skills on a campaign |
+| ✏️ | `manage_campaign_dnis` | Attach/detach inbound numbers |
+| ✏️ | `manage_campaign_dispositions` | Add/remove agent dispositions on a campaign |
+| 🟢 | `list_campaign_profiles` | List campaign profiles (ANI, attempts, timeouts) |
+| ✏️ | `manage_campaign_profile` | Create / modify / delete campaign profiles |
 
 </details>
 
@@ -191,12 +204,11 @@ curl -X POST https://<your-worker>.workers.dev/mcp \
 
 | | Tool | What it does |
 |--|------|--------------|
-| 🟢 | `list_dialing_lists` | List outbound dialing lists + record counts |
-| ✏️ | `create_list` | Create a new empty dialing list |
-| ✏️ | `delete_list` | Delete a dialing list (CRM contacts untouched) |
-| ✏️ | `add_record_to_list` | Push a lead into a dialing list (async Five9 import) |
-| ✏️ | `delete_record_from_list` | Remove matching records from a list (CRM contacts untouched) |
-| 🟢 | `get_import_result` | Check the outcome of an async list/CRM import |
+| 🟢 | `list_dialing_lists` | List dialing lists + record counts |
+| ✏️ | `create_list` / `delete_list` | Create or delete a dialing list |
+| ✏️ | `add_record_to_list` | Push a lead into a list (async import) |
+| ✏️ | `delete_record_from_list` | Remove matching records from a list |
+| 🟢 | `get_import_result` | Outcome of an async list/CRM import |
 
 </details>
 
@@ -205,9 +217,11 @@ curl -X POST https://<your-worker>.workers.dev/mcp \
 
 | | Tool | What it does |
 |--|------|--------------|
-| 🟢 | `search_contacts` | Look up contact records by exact field values |
-| ✏️ | `update_contact` | Update an existing contact; defaults to sole-match safety |
-| 🟢 | `list_contact_fields` | Discover the domain's contact field schema |
+| 🟢 | `search_contacts` | Look up contacts by exact field values |
+| ✏️ | `update_contact` | Update a contact (sole-match safety by default) |
+| ✏️ | `delete_contact` | Delete a contact (only when exactly one matches) |
+| 🟢 | `list_contact_fields` | The domain's contact field schema |
+| ✏️ | `manage_contact_field` | Create / delete custom CRM fields |
 
 </details>
 
@@ -216,7 +230,28 @@ curl -X POST https://<your-worker>.workers.dev/mcp \
 
 | | Tool | What it does |
 |--|------|--------------|
-| ✏️ | `manage_dnc` | Check / add / remove numbers on the domain Do-Not-Call list |
+| ✏️ | `manage_dnc` | Check / add / remove numbers on the domain DNC list |
+| 🟢 | `get_dialing_rules` | Domain dialing rules (time/state restrictions) |
+
+</details>
+
+<details open>
+<summary><strong>🧑‍💼 Users & skills</strong></summary>
+
+| | Tool | What it does |
+|--|------|--------------|
+| 🟢 | `list_users` | List users with general info |
+| 🟢 | `get_user_details` | One user's full record: roles, skills, groups |
+| ✏️ | `create_user` | Create a user with roles, skills, and groups |
+| ✏️ | `modify_user` | Edit a user's info — pass only the changes |
+| ✏️ | `delete_user` | Delete a user |
+| 🟢 | `list_user_profiles` | Role/permission templates |
+| 🟢 | `list_skills` / `get_skill_details` | Skills, with or without assigned users |
+| ✏️ | `manage_skill` | Create / modify / delete skills |
+| ✏️ | `manage_user_skills` | Assign skills to users, set levels |
+| 🟢 | `list_agent_groups` | Agent groups + members |
+| ✏️ | `manage_agent_group` | Create / delete groups, add/remove agents |
+| ✏️ | `manage_reason_code` | Not Ready / Logout reason codes |
 
 </details>
 
@@ -225,12 +260,17 @@ curl -X POST https://<your-worker>.workers.dev/mcp \
 
 | | Tool | What it does |
 |--|------|--------------|
-| 🟢 | `list_users` | List agents / supervisors / admins |
-| 🟢 | `list_skills` | List skills (routing queues) |
-| 🟢 | `list_dispositions` | List call dispositions and their settings |
-| 🟢 | `list_agent_groups` | List agent groups and their members |
-| 🟢 | `list_ivr_scripts` | List IVR scripts (metadata only) |
-| 🟢 | `list_dnis` | List provisioned inbound numbers; optionally only unassigned |
+| 🟢 | `list_dispositions` | Call dispositions and their settings |
+| ✏️ | `manage_disposition` | Create / modify / rename / delete dispositions (incl. redial timers) |
+| 🟢 | `list_ivr_scripts` / `get_ivr_script` | IVR scripts — metadata, or one script's full XML |
+| 🟢 | `list_prompts` | Voice prompts on the domain |
+| ✏️ | `manage_tts_prompt` | Create / modify / delete text-to-speech prompts |
+| 🟢 | `list_dnis` | Provisioned inbound numbers (optionally unassigned only) |
+| 🟢 | `list_call_variables` | Call variables and variable groups |
+| ✏️ | `manage_call_variable` | Create / delete custom call variables |
+| 🟢 | `list_web_connectors` | Web connector integrations |
+| ✏️ | `manage_speed_dial` | List / create / delete speed-dial codes |
+| 🟢 | `get_vcc_configuration` | Domain-level VCC settings |
 
 </details>
 
@@ -241,7 +281,7 @@ curl -X POST https://<your-worker>.workers.dev/mcp \
 |--|------|--------------|
 | 🟢 | `run_report` | Kick off any report by folder + name, optional time range |
 | 🟢 | `get_report_result` | Poll for the report's CSV output |
-| 🟢 | `get_realtime_stats` | `AgentState`, `ACDStatus`, `CampaignState`, `Inbound/OutboundCampaignStatistics`, `AgentStatistics` |
+| 🟢 | `get_realtime_stats` | AgentState, ACDStatus, CampaignState, campaign statistics |
 
 </details>
 
@@ -305,7 +345,7 @@ Then open `http://localhost:8787/console`, paste `dev-local-token`, and run tool
 
 ## 🤝 Contributing
 
-PRs welcome! The Five9 Config API has ~180 operations and this server wraps 25 of the most useful — the pattern in `five9.js` + `tools.js` is easy to extend (read the SOAP notes first and save yourself a fight with the WSDL). Please keep the zero-dependency constraint.
+PRs welcome! The Five9 Config API has ~180 operations and this server wraps 58 of the most useful — the pattern in `five9.js` + `tools.js` is easy to extend (read the SOAP notes first and save yourself a fight with the WSDL). Please keep the zero-dependency constraint.
 
 ## 📄 License
 
