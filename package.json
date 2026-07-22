@@ -1,0 +1,12 @@
+{
+  "name": "five9-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for the Five9 cloud contact center on Cloudflare Workers",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "license": "MIT"
+}

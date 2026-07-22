@@ -1,0 +1,14 @@
+name = "five9-mcp"
+main = "src/index.js"
+compatibility_date = "2026-07-01"
+
+# Secrets (set via `npx wrangler secret put <NAME>`):
+#   FIVE9_USERNAME  - Five9 admin/supervisor user with API access
+#   FIVE9_PASSWORD  - that user's password
+#   MCP_AUTH_TOKEN  - (strongly recommended) bearer token required on every MCP request
+#
+# Optional vars (override in [vars] or the dashboard):
+[vars]
+FIVE9_API_HOST = "api.five9.com"        # EU: api.eu.five9.com  CA: api.ca.five9.com
+FIVE9_ADMIN_VERSION = "v13"             # Config Web Services WSDL version
+FIVE9_SUPERVISOR_VERSION = "v13"        # Statistics Web Services WSDL version
