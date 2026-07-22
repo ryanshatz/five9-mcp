@@ -2,11 +2,20 @@ name = "five9-mcp"
 main = "src/index.js"
 compatibility_date = "2026-07-01"
 
-# Secrets (set via `npx wrangler secret put <NAME>`):
-#   FIVE9_USERNAME  - Five9 admin/supervisor user with API access
-#   FIVE9_PASSWORD  - that user's password
-#   MCP_AUTH_TOKEN  - (strongly recommended) bearer token required on every MCP request
+# Configuration comes from one of two places (env wins if both are set):
+#   1. The in-browser setup wizard at /setup — stores config in the KV
+#      namespace below. Easiest path; no terminal needed after deploy.
+#   2. Wrangler secrets (`npx wrangler secret put <NAME>`):
+#      FIVE9_USERNAME / FIVE9_PASSWORD / MCP_AUTH_TOKEN
 #
+# KV namespace for wizard-managed config. "Deploy to Cloudflare" provisions
+# this automatically; for a manual deploy run
+#   npx wrangler kv namespace create CONFIG
+# and paste your id here.
+[[kv_namespaces]]
+binding = "CONFIG"
+id = "55c3a3315d994706a0a6fa3058549279"
+
 # Optional vars (override in [vars] or the dashboard):
 [vars]
 FIVE9_API_HOST = "api.five9.com"        # EU: api.eu.five9.com  CA: api.ca.five9.com

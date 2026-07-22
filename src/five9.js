@@ -80,14 +80,15 @@ export function toArray(v) {
 export class Five9Error extends Error {}
 
 export class Five9Client {
-  constructor(env) {
-    if (!env.FIVE9_USERNAME || !env.FIVE9_PASSWORD) {
-      throw new Five9Error('FIVE9_USERNAME / FIVE9_PASSWORD secrets are not configured on this Worker.');
+  // cfg: { username, password, host, adminVersion, supervisorVersion } — see config.js
+  constructor(cfg) {
+    if (!cfg?.username || !cfg?.password) {
+      throw new Five9Error('Five9 credentials are not configured — open /setup on this server, or set the FIVE9_USERNAME / FIVE9_PASSWORD Wrangler secrets.');
     }
-    this.auth = 'Basic ' + btoa(`${env.FIVE9_USERNAME}:${env.FIVE9_PASSWORD}`);
-    this.host = env.FIVE9_API_HOST || 'api.five9.com';
-    this.adminVersion = env.FIVE9_ADMIN_VERSION || 'v13';
-    this.supervisorVersion = env.FIVE9_SUPERVISOR_VERSION || 'v13';
+    this.auth = 'Basic ' + btoa(`${cfg.username}:${cfg.password}`);
+    this.host = cfg.host || 'api.five9.com';
+    this.adminVersion = cfg.adminVersion || 'v13';
+    this.supervisorVersion = cfg.supervisorVersion || 'v13';
   }
 
   async soap(service, method, innerXml = '') {

@@ -59,7 +59,7 @@ const BASE_CSS = `
   .btn.primary:hover{filter:brightness(1.08)}
 `;
 
-export function landingPage(tools) {
+export function landingPage(tools, cfg = { configured: true }) {
   const groups = grouped(tools);
   const toolCards = groups.map((g) => `
     <section class="tgroup">
@@ -130,26 +130,26 @@ export function landingPage(tools) {
       <span class="pill">☁️ Cloudflare Workers</span>
     </div>
     <div class="ctas">
-      <a class="btn primary" href="/console">▶ Open the console</a>
+      ${cfg.configured
+        ? '<a class="btn primary" href="/console">▶ Open the console</a>'
+        : '<a class="btn primary" href="/setup">⚙️ Finish setup — connect your Five9 domain</a>'}
       <a class="btn" href="https://github.com/ryanshatz/five9-mcp">★ Star on GitHub</a>
     </div>
+    ${cfg.configured ? '' : `<p style="margin-top:1rem"><span class="pill">👋 This server isn't connected to a Five9 domain yet — <a href="/setup">finish setup</a> (takes 1 minute, no terminal needed)</span></p>`}
   </div>
 
   <h2 id="setup">Set up your own in 3 steps</h2>
-  <p class="sub">Runs on Cloudflare's free tier. You need a Cloudflare account and a Five9 user with API access.</p>
+  <p class="sub">Runs on Cloudflare's free tier. You need a free Cloudflare account and a Five9 user with API access. <strong>No terminal required.</strong></p>
   <div class="steps">
-    <div class="step"><span class="n">1</span><h3>Deploy the Worker</h3>
-      <div class="copywrap"><pre><code>git clone https://github.com/ryanshatz/five9-mcp
-cd five9-mcp
-npx wrangler deploy</code></pre><button data-copy>Copy</button></div>
-      <p>Wrangler prints your URL, e.g. <code>https://five9-mcp.you.workers.dev</code>.</p></div>
-    <div class="step"><span class="n">2</span><h3>Add your secrets</h3>
-      <div class="copywrap"><pre><code>npx wrangler secret put FIVE9_USERNAME
-npx wrangler secret put FIVE9_PASSWORD
-npx wrangler secret put MCP_AUTH_TOKEN</code></pre><button data-copy>Copy</button></div>
-      <p>Use a <strong>dedicated Five9 API user</strong>, and make <code>MCP_AUTH_TOKEN</code> a long random string — it's the key to your server.</p></div>
+    <div class="step"><span class="n">1</span><h3>Deploy to Cloudflare</h3>
+      <p><a href="https://deploy.workers.cloudflare.com/?url=https://github.com/ryanshatz/five9-mcp"><img src="https://deploy.workers.cloudflare.com/button" alt="Deploy to Cloudflare" style="max-width:100%"></a></p>
+      <p>Click the button, sign in to Cloudflare, and it deploys your own copy in your browser. You get a URL like <code>https://five9-mcp.you.workers.dev</code>.</p>
+      <p><small>Prefer the CLI? <code>git clone</code> the repo and <code>npx wrangler deploy</code> works too.</small></p></div>
+    <div class="step"><span class="n">2</span><h3>Run the setup wizard</h3>
+      <p>Open <code>/setup</code> on your new server, enter your Five9 username &amp; password, and pick your region.</p>
+      <p>The wizard <strong>tests the credentials live against Five9</strong>, then hands you your access key. Use a <strong>dedicated Five9 API user</strong>, not a personal admin login.</p></div>
     <div class="step"><span class="n">3</span><h3>Connect your AI</h3>
-      <p>Point Claude or ChatGPT at <code>https://&lt;your-worker&gt;/mcp</code> and authorize with your access key — full walkthroughs below.</p>
+      <p>Point Claude or ChatGPT at <code>https://&lt;your-worker&gt;/mcp</code> and paste the access key when asked — full walkthroughs below.</p>
       <p>Then try: <em>"check the connection and list my campaigns."</em></p></div>
   </div>
 
@@ -372,6 +372,114 @@ export function consolePage(tools) {
     });
   }
   </script>`);
+}
+
+export function setupPage(cfg) {
+  const envManaged = cfg.source === 'env';
+  const reconfigure = !envManaged && cfg.configured;
+
+  const inner = envManaged ? `
+    <div class="card">
+      <h1>🔒 Managed by Wrangler secrets</h1>
+      <p>This server's Five9 credentials are set as Cloudflare Worker secrets, which override the setup wizard.
+      To change them, the operator runs:</p>
+      <pre><code>npx wrangler secret put FIVE9_USERNAME
+npx wrangler secret put FIVE9_PASSWORD
+npx wrangler secret put MCP_AUTH_TOKEN</code></pre>
+      <p>To switch to browser-based setup instead, delete those secrets
+      (<code>npx wrangler secret delete &lt;NAME&gt;</code>) and reload this page.</p>
+      <p><a class="btn" href="/">← Back</a></p>
+    </div>` : `
+    <div class="card" id="formcard">
+      <h1>${reconfigure ? '🔧 Update Five9 credentials' : '👋 Welcome! Let’s connect your Five9 domain'}</h1>
+      <p>${reconfigure
+        ? 'Enter the new credentials and this server’s current access key. Your access key stays the same.'
+        : 'Enter the Five9 user this server should act as. We recommend a <strong>dedicated API user</strong> — the AI can only do what this user’s Five9 role allows. Credentials are checked against Five9 before anything is saved.'}</p>
+      <div class="field"><label for="u">Five9 username</label>
+        <input id="u" type="text" placeholder="apiuser@yourdomain" autocomplete="username" spellcheck="false"></div>
+      <div class="field"><label for="p">Five9 password</label>
+        <input id="p" type="password" autocomplete="current-password"></div>
+      <div class="field"><label for="h">Region</label>
+        <select id="h">
+          <option value="api.five9.com">United States (api.five9.com)</option>
+          <option value="api.eu.five9.com">Europe (api.eu.five9.com)</option>
+          <option value="api.ca.five9.com">Canada (api.ca.five9.com)</option>
+        </select></div>
+      ${reconfigure ? `
+      <div class="field"><label for="k">Current access key</label>
+        <input id="k" type="password" placeholder="This server's existing access key" autocomplete="off"></div>` : ''}
+      <div class="runrow">
+        <button class="btn primary" id="go">✓ Test &amp; save</button>
+        <span id="runstat"></span>
+      </div>
+      <div id="err" class="errbox" style="display:none"></div>
+    </div>
+    <div class="card" id="done" style="display:none">
+      <h1>🎉 Connected!</h1>
+      <p id="donemsg"></p>
+      <div id="keywrap" style="display:none">
+        <p><strong>Your access key</strong> — shown only this once. Store it in a password manager:</p>
+        <div class="keybox"><code id="key"></code><button class="btn" id="copykey">Copy</button></div>
+      </div>
+      <p><strong>Next:</strong> connect your AI (walkthroughs on the <a href="/#connect">home page</a>)
+      or try a tool right now in the <a href="/console">console</a>.</p>
+    </div>
+    <script>
+    document.getElementById('go').addEventListener('click', function(){
+      var stat = document.getElementById('runstat'), err = document.getElementById('err');
+      err.style.display = 'none';
+      var body = {
+        username: document.getElementById('u').value.trim(),
+        password: document.getElementById('p').value,
+        host: document.getElementById('h').value
+      };
+      var k = document.getElementById('k'); if (k) body.current_key = k.value.trim();
+      if (!body.username || !body.password) { err.textContent = 'Please fill in username and password.'; err.style.display = 'block'; return; }
+      stat.innerHTML = '<span class="spin"></span> checking with Five9…';
+      fetch('/setup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+        .then(function(r){ return r.json().then(function(j){ return { ok: r.ok, j: j }; }); })
+        .then(function(res){
+          stat.textContent = '';
+          if (!res.ok) { err.textContent = res.j.error || 'Something went wrong.'; err.style.display = 'block'; return; }
+          document.getElementById('formcard').style.display = 'none';
+          var done = document.getElementById('done'); done.style.display = 'block';
+          document.getElementById('donemsg').textContent =
+            'Credentials verified — ' + res.j.skillsVisible + ' skills visible on your domain. ' + (res.j.note || '');
+          if (res.j.accessKey) {
+            document.getElementById('keywrap').style.display = 'block';
+            document.getElementById('key').textContent = res.j.accessKey;
+          }
+        })
+        .catch(function(e){ stat.textContent = ''; err.textContent = 'Request failed: ' + e.message; err.style.display = 'block'; });
+    });
+    var ck = document.getElementById('copykey');
+    if (ck) ck.addEventListener('click', function(){
+      navigator.clipboard.writeText(document.getElementById('key').textContent).then(function(){
+        ck.textContent = 'Copied!'; setTimeout(function(){ ck.textContent = 'Copy'; }, 1400);
+      });
+    });
+    </script>`;
+
+  return page('Setup · five9-mcp', `
+  <style>
+  .wrap{max-width:560px;margin:0 auto;padding:3.5rem 1.25rem}
+  .logo{font-weight:800;color:var(--ink);font-size:1.05rem} .logo span{color:var(--accent)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:1.6rem 1.8rem;box-shadow:var(--shadow);margin-top:1rem}
+  .card h1{font-size:1.35rem;letter-spacing:-.02em;margin:0 0 .5rem}
+  .card p{font-size:.95rem;color:var(--muted)}
+  .field{margin:1rem 0} .field label{display:block;font-weight:600;font-size:.88rem;margin-bottom:.3rem}
+  .field input,.field select{width:100%;padding:.6em .8em;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--ink);font-size:.95rem}
+  .runrow{display:flex;align-items:center;gap:.8rem;margin-top:1.3rem}
+  .errbox{margin-top:1rem;background:color-mix(in srgb,var(--err) 10%,transparent);color:var(--err);border-radius:10px;padding:.7rem 1rem;font-size:.92rem}
+  .keybox{display:flex;align-items:center;gap:.6rem;background:var(--code);border-radius:10px;padding:.7rem .9rem;flex-wrap:wrap}
+  .keybox code{background:none;word-break:break-all;flex:1;min-width:200px}
+  .spin{display:inline-block;width:1em;height:1em;border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:sp .7s linear infinite;vertical-align:-.15em}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  </style>
+  <div class="wrap">
+    <a class="logo" href="/">☎️ five9-<span>mcp</span></a>
+    ${inner}
+  </div>`);
 }
 
 function page(title, body) {

@@ -316,9 +316,9 @@ export function toolDefs() {
   return TOOLS.map(({ name, description, inputSchema }) => ({ name, description, inputSchema }));
 }
 
-export async function callTool(env, name, args) {
+export async function callTool(cfg, name, args) {
   const tool = TOOLS.find((t) => t.name === name);
   if (!tool) throw new Error(`Unknown tool: ${name}`);
-  const f9 = tool.five9 === false ? null : new Five9Client(env);
+  const f9 = tool.five9 === false ? null : new Five9Client(cfg);
   return tool.handler(f9, args || {});
 }

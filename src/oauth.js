@@ -53,14 +53,15 @@ function json(data, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
 }
 
-// True if the request may use the MCP endpoint.
-export async function checkAuth(request, env) {
-  if (!env.MCP_AUTH_TOKEN) return true; // auth not configured — open server
+// True if the request may use the MCP endpoint. `accessKey` is the server's
+// configured access key (from env or KV — see config.js).
+export async function checkAuth(request, accessKey) {
+  if (!accessKey) return true; // auth not configured — open server
   const header = request.headers.get('Authorization') || '';
   if (!header.startsWith('Bearer ')) return false;
-  const token = header.slice(7).trim();
-  if (token === env.MCP_AUTH_TOKEN) return true; // raw access key still works
-  const payload = await read(env.MCP_AUTH_TOKEN, token);
+  const presented = header.slice(7).trim();
+  if (presented === accessKey) return true; // raw access key still works
+  const payload = await read(accessKey, presented);
   return payload?.t === 'a';
 }
 
@@ -75,7 +76,7 @@ export function unauthorized(origin) {
 }
 
 // Routes any OAuth-related path; returns null if the path isn't ours.
-export async function handleOAuth(request, env, url) {
+export async function handleOAuth(request, accessKey, url) {
   const path = url.pathname.replace(/\/+$/, '') || '/';
   const origin = url.origin;
 
@@ -107,8 +108,8 @@ export async function handleOAuth(request, env, url) {
     try { body = await request.json(); } catch { return json({ error: 'invalid_client_metadata' }, 400); }
     const redirectUris = Array.isArray(body.redirect_uris) ? body.redirect_uris.filter((u) => typeof u === 'string') : [];
     if (!redirectUris.length) return json({ error: 'invalid_redirect_uri' }, 400);
-    if (!env.MCP_AUTH_TOKEN) return json({ error: 'server_not_configured', error_description: 'MCP_AUTH_TOKEN is not set on this Worker.' }, 500);
-    const clientId = await mint(env.MCP_AUTH_TOKEN, { t: 'client', r: redirectUris });
+    if (!accessKey) return json({ error: 'server_not_configured', error_description: 'MCP_AUTH_TOKEN is not set on this Worker.' }, 500);
+    const clientId = await mint(accessKey, { t: 'client', r: redirectUris });
     return json({
       client_id: clientId,
       redirect_uris: redirectUris,
@@ -121,9 +122,9 @@ export async function handleOAuth(request, env, url) {
 
   if (path === '/authorize' && request.method === 'GET') {
     const q = url.searchParams;
-    const client = await read(env.MCP_AUTH_TOKEN || '', q.get('client_id'));
+    const client = await read(accessKey || '', q.get('client_id'));
     const redirectUri = q.get('redirect_uri') || '';
-    if (!env.MCP_AUTH_TOKEN) return authPage({ error: 'This server has no MCP_AUTH_TOKEN configured — the operator must set one before OAuth can be used.' });
+    if (!accessKey) return authPage({ error: 'This server has no MCP_AUTH_TOKEN configured — the operator must set one before OAuth can be used.' });
     if (client?.t !== 'client' || !client.r.includes(redirectUri)) {
       return authPage({ error: 'Unknown client or redirect URI. Re-add the connector so it re-registers.' });
     }
@@ -145,38 +146,38 @@ export async function handleOAuth(request, env, url) {
     const redirectUri = form.get('redirect_uri') || '';
     const state = form.get('state') || '';
     const codeChallenge = form.get('code_challenge') || '';
-    const client = await read(env.MCP_AUTH_TOKEN || '', clientId);
-    if (!env.MCP_AUTH_TOKEN || client?.t !== 'client' || !client.r.includes(redirectUri) || !codeChallenge) {
+    const client = await read(accessKey || '', clientId);
+    if (!accessKey || client?.t !== 'client' || !client.r.includes(redirectUri) || !codeChallenge) {
       return authPage({ error: 'Invalid authorization request. Re-add the connector and try again.' });
     }
-    if (key !== env.MCP_AUTH_TOKEN) {
+    if (key !== accessKey) {
       return authPage({ clientId, redirectUri, state, codeChallenge, error: 'Wrong access key — check with the operator of this server.' });
     }
-    const code = await mint(env.MCP_AUTH_TOKEN, { t: 'code', ru: redirectUri, cc: codeChallenge, exp: now() + 600 });
+    const code = await mint(accessKey, { t: 'code', ru: redirectUri, cc: codeChallenge, exp: now() + 600 });
     const sep = redirectUri.includes('?') ? '&' : '?';
     const location = `${redirectUri}${sep}code=${encodeURIComponent(code)}${state ? `&state=${encodeURIComponent(state)}` : ''}`;
     return new Response(null, { status: 302, headers: { Location: location } });
   }
 
   if (path === '/token' && request.method === 'POST') {
-    if (!env.MCP_AUTH_TOKEN) return json({ error: 'server_error' }, 500);
+    if (!accessKey) return json({ error: 'server_error' }, 500);
     const form = await request.formData();
     const grantType = form.get('grant_type');
 
     if (grantType === 'authorization_code') {
-      const code = await read(env.MCP_AUTH_TOKEN, form.get('code'));
+      const code = await read(accessKey, form.get('code'));
       if (code?.t !== 'code') return json({ error: 'invalid_grant' }, 400);
       const redirectUri = form.get('redirect_uri');
       if (redirectUri && redirectUri !== code.ru) return json({ error: 'invalid_grant' }, 400);
       const verifier = form.get('code_verifier') || '';
       if (!verifier || (await sha256b64url(verifier)) !== code.cc) return json({ error: 'invalid_grant', error_description: 'PKCE verification failed' }, 400);
-      return json(await issueTokens(env));
+      return json(await issueTokens(accessKey));
     }
 
     if (grantType === 'refresh_token') {
-      const refresh = await read(env.MCP_AUTH_TOKEN, form.get('refresh_token'));
+      const refresh = await read(accessKey, form.get('refresh_token'));
       if (refresh?.t !== 'r') return json({ error: 'invalid_grant' }, 400);
-      return json(await issueTokens(env));
+      return json(await issueTokens(accessKey));
     }
 
     return json({ error: 'unsupported_grant_type' }, 400);
@@ -185,12 +186,12 @@ export async function handleOAuth(request, env, url) {
   return null;
 }
 
-async function issueTokens(env) {
+async function issueTokens(accessKey) {
   return {
-    access_token: await mint(env.MCP_AUTH_TOKEN, { t: 'a', exp: now() + ACCESS_TTL }),
+    access_token: await mint(accessKey, { t: 'a', exp: now() + ACCESS_TTL }),
     token_type: 'Bearer',
     expires_in: ACCESS_TTL,
-    refresh_token: await mint(env.MCP_AUTH_TOKEN, { t: 'r', exp: now() + REFRESH_TTL }),
+    refresh_token: await mint(accessKey, { t: 'r', exp: now() + REFRESH_TTL }),
     scope: 'five9',
   };
 }

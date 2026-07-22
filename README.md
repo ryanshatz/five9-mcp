@@ -34,27 +34,40 @@ Deploy it and your Worker serves more than an API:
 | Page | What you get |
 |------|--------------|
 | `/` | A polished landing page: live server status, this setup guide, click-by-click AI connection walkthroughs, and the full tool catalog |
+| `/setup` | The **setup wizard** — enter Five9 credentials in your browser, get them verified live, receive your access key. No terminal, no secrets commands |
 | `/console` | An **interactive console** — paste your access key, pick any of the 25 tools, fill a generated form, and run it against your live Five9 domain right from the browser |
 | `/mcp` | The MCP endpoint itself (streamable HTTP, stateless) |
 | `/health` | JSON healthcheck |
 
 The console is the fastest way to sanity-check credentials, explore what each tool returns, or debug a campaign — no AI required.
 
-## 🚀 Quick start
+## 🚀 Quick start — no terminal needed
 
-You need a Cloudflare account (free tier is fine) and a Five9 user with API access — **create a dedicated Five9 API user** scoped to what you want an AI to do, don't reuse a personal admin login.
+You need a free Cloudflare account and a Five9 user with API access — **create a dedicated Five9 API user** scoped to what you want an AI to do, don't reuse a personal admin login.
 
-**1 — Deploy the Worker**
+**1 — Deploy to Cloudflare** *(one click, in your browser)*
+
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/ryanshatz/five9-mcp)
+
+Sign in to Cloudflare and click through — it creates your own copy of this Worker (plus the KV namespace it needs) and gives you a URL like `https://five9-mcp.you.workers.dev`.
+
+**2 — Run the setup wizard** *(in your browser)*
+
+Open **`/setup`** on your new server. Enter your Five9 username, password, and region — the wizard **verifies them live against Five9** before saving, then hands you your **access key** (shown once — store it in a password manager).
+
+**3 — Connect your AI** (walkthroughs below), then ask it to *"check the connection and list my campaigns."* 🎉
+
+<details>
+<summary><strong>⌨️ Prefer the CLI?</strong></summary>
 
 ```sh
 git clone https://github.com/ryanshatz/five9-mcp
 cd five9-mcp
+npx wrangler kv namespace create CONFIG   # paste the printed id into wrangler.toml
 npx wrangler deploy
 ```
 
-Wrangler prints your URL, e.g. `https://five9-mcp.you.workers.dev`.
-
-**2 — Add your secrets**
+Then either use the `/setup` wizard, or skip it and manage credentials as Wrangler secrets (secrets override the wizard):
 
 ```sh
 npx wrangler secret put FIVE9_USERNAME   # e.g. apiuser@yourdomain
@@ -62,7 +75,7 @@ npx wrangler secret put FIVE9_PASSWORD
 npx wrangler secret put MCP_AUTH_TOKEN   # a long random string — this is the key to your server
 ```
 
-**3 — Connect your AI** (walkthroughs below), then ask it to *"check the connection and list my campaigns."* 🎉
+</details>
 
 <details>
 <summary><strong>🌍 Non-US domain or different API version?</strong></summary>
@@ -231,11 +244,12 @@ No build step, no dependencies — plain JS modules in `src/`:
 
 ```
 src/
-├── index.js   # router, CORS, MCP JSON-RPC handler
+├── index.js   # router, CORS, MCP JSON-RPC handler, /setup endpoint
 ├── five9.js   # SOAP client: envelope builder, ~60-line XML parser, one method per Five9 op
 ├── tools.js   # MCP tool definitions (JSON Schema) + dispatch
 ├── oauth.js   # stateless OAuth 2.1 server (single-operator model)
-├── ui.js      # landing page + interactive console
+├── config.js  # config resolution: Wrangler secrets > KV (setup wizard)
+├── ui.js      # landing page, setup wizard, interactive console
 └── about.js   # operator context — edit this for your deployment
 ```
 
@@ -254,8 +268,9 @@ Requests are stateless: every MCP call opens a fresh Five9 SOAP exchange with HT
 
 ## 🛡️ Security
 
-- Five9 credentials live only as Cloudflare Worker secrets; no tool ever returns them.
-- **Always set `MCP_AUTH_TOKEN`.** Without it the server runs open — anyone who finds the URL can drive your contact center.
+- Five9 credentials live in your Cloudflare account only — as Worker secrets, or (wizard path) in a Workers KV namespace, encrypted at rest. No tool ever returns them, and Wrangler secrets always override KV.
+- The setup wizard is **open only on a fresh, unconfigured server** — run it right after deploying. Once configured, any change requires the current access key, and env-managed servers refuse wizard changes entirely.
+- **Always complete setup (or set `MCP_AUTH_TOKEN`).** An unconfigured server with no access key runs open — anyone who finds the URL can drive your contact center.
 - Write tools (✏️ above) change your domain. Scope the Five9 API user's role to what you actually want an AI to do — Five9 permissions are the real security boundary.
 - `manage_dnc remove` and `delete_list` deserve extra caution; the `about` instructions tell AIs to confirm before using them.
 - The console stores your access key in your browser's localStorage only, and calls go same-origin to your own Worker.
