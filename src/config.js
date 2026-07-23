@@ -29,6 +29,15 @@ export async function loadConfig(env) {
   };
   cfg.configured = Boolean(cfg.username && cfg.password);
   cfg.restConfigured = Boolean(cfg.restConsumerKey && cfg.restConsumerSecret);
+  // Named New Platform credentials (different API families). 'default' is the
+  // all-apis-access credential; extras like 'data-tables' use their own key.
+  cfg.restCredentials = {};
+  if (cfg.restConsumerKey && cfg.restConsumerSecret) {
+    cfg.restCredentials.default = { key: cfg.restConsumerKey, secret: cfg.restConsumerSecret };
+  }
+  const dtKey = env.FIVE9_DT_CONSUMER_KEY || stored?.restDtConsumerKey || '';
+  const dtSecret = env.FIVE9_DT_CONSUMER_SECRET || stored?.restDtConsumerSecret || '';
+  if (dtKey && dtSecret) cfg.restCredentials['data-tables'] = { key: dtKey, secret: dtSecret };
   return cfg;
 }
 

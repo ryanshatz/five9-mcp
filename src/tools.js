@@ -935,28 +935,34 @@ export const TOOLS = [
   // ---- New Platform REST APIs (OAuth 2.0) — see five9rest.js ----
   {
     name: 'rest_check_connection',
-    description: 'Verify the Worker can obtain an OAuth 2.0 bearer token from the Five9 New Platform APIs (Enhanced Routing, Agent Sessions, etc.). Confirms API Access Control is enabled and the Consumer Key/Secret are valid. Separate from check_connection, which tests the SOAP username/password.',
-    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    description: 'Verify the Worker can obtain an OAuth 2.0 bearer token from the Five9 New Platform APIs. Confirms API Access Control is enabled and the Consumer Key/Secret are valid, and lists which named credentials are configured. Optional credential selects which one to test (default "default"; e.g. "data-tables"). Separate from check_connection, which tests the SOAP username/password.',
+    inputSchema: {
+      type: 'object',
+      properties: { credential: { type: 'string', description: 'Named credential to test (default "default"; e.g. "data-tables")' } },
+      additionalProperties: false,
+    },
     rest: true,
-    handler: (r) => r.checkConnection(),
+    handler: (r, a) => r.checkConnection(a.credential || 'default'),
   },
   {
     name: 'rest_call',
-    description: 'Make an authenticated call to any Five9 New Platform REST API endpoint (OAuth bearer token handled automatically, with rate-limit/backoff and ETag/If-Match concurrency support). Use this to explore endpoints before typed tools exist. path is relative to the regional base URL, e.g. "/v1/domains/{domainId}/..." ({domainId} is substituted from config). For writes, pass if_match with the ETag from a prior read to guard against conflicts.',
+    description: 'Make an authenticated call to any Five9 New Platform REST API endpoint (OAuth bearer token handled automatically, with rate-limit/backoff and ETag/If-Match concurrency support). Use this to explore endpoints before typed tools exist. path is relative to the base URL, e.g. "/interactions/v1/domains/{domainId}/dispositions" ({domainId} is substituted from config). credential picks which API-family credential to use (default "default"; e.g. "data-tables"). base_url overrides the host for services on a different base. For writes, pass if_match with the ETag from a prior read.',
     inputSchema: {
       type: 'object',
       properties: {
         method: { type: 'string', enum: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'], description: 'HTTP method (default GET)' },
-        path: { type: 'string', description: 'Endpoint path relative to the base URL, e.g. "/v1/domains/{domainId}/skills". {domainId} is substituted automatically.' },
+        path: { type: 'string', description: 'Endpoint path relative to the base URL, e.g. "/interactions/v1/domains/{domainId}/dispositions". {domainId} is substituted automatically.' },
         query: { type: 'object', description: 'Query-string parameters', additionalProperties: { type: 'string' } },
         body: { type: 'object', description: 'JSON request body (for POST/PUT/PATCH)', additionalProperties: true },
         if_match: { type: 'string', description: 'ETag value for optimistic-concurrency writes (sent as If-Match)' },
+        credential: { type: 'string', description: 'Named credential / API family to use (default "default"; e.g. "data-tables")' },
+        base_url: { type: 'string', description: 'Override the host base URL (for services hosted on a different base than the default)' },
       },
       required: ['path'],
       additionalProperties: false,
     },
     rest: true,
-    handler: (r, a) => r.request(a.method || 'GET', a.path, { query: a.query, body: a.body, ifMatch: a.if_match }),
+    handler: (r, a) => r.request(a.method || 'GET', a.path, { query: a.query, body: a.body, ifMatch: a.if_match, credential: a.credential || 'default', baseUrl: a.base_url }),
   },
   {
     name: 'manage_circle',
@@ -1017,6 +1023,36 @@ export const TOOLS = [
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     rest: true,
     handler: (r) => r.getDomainInfo(),
+  },
+  {
+    name: 'list_data_tables',
+    description: 'List Five9 Data Tables (structured lookup tables used in routing/IVR logic) via the OAuth New Platform API — no SOAP equivalent. Returns each table\'s id, name, description, and row count. Uses a SEPARATE "data-tables" credential (FIVE9_DT_CONSUMER_KEY/SECRET) in the "Data Tables access" API family — verify with rest_check_connection credential "data-tables". Paginated.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        cursor: { type: 'string', description: 'Pagination cursor (nextCursor from a prior call)' },
+        limit: { type: 'number', description: 'Page size (default 100)' },
+      },
+      additionalProperties: false,
+    },
+    rest: true,
+    handler: (r, a) => r.listDataTables({ cursor: a.cursor, limit: a.limit }),
+  },
+  {
+    name: 'get_data_table_rows',
+    description: 'Get the rows of a Five9 Data Table by table_id (paginated) via the OAuth New Platform API. Get table_id from list_data_tables. Read-only. Uses the "data-tables" credential.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        table_id: { type: 'string', description: 'Data table id (dataTableId from list_data_tables)' },
+        cursor: { type: 'string', description: 'Pagination cursor (nextCursor from a prior call)' },
+        limit: { type: 'number', description: 'Page size (default 100)' },
+      },
+      required: ['table_id'],
+      additionalProperties: false,
+    },
+    rest: true,
+    handler: (r, a) => r.getDataTableRows(a.table_id, { cursor: a.cursor, limit: a.limit }),
   },
 ];
 

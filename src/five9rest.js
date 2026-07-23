@@ -38,32 +38,39 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const backoffMs = (attempt) => [1000, 2000, 4000, 8000][Math.min(attempt, 3)];
 
 export class Five9RestClient {
-  // cfg: { restConsumerKey, restConsumerSecret, restDomainId, restRegion,
-  //        restBaseUrl } — see config.js
+  // cfg: { restCredentials: { <name>: {key, secret} }, restConsumerKey,
+  //        restConsumerSecret, restDomainId, restRegion, restBaseUrl } — see
+  //        config.js. Supports multiple named credentials (different API
+  //        families), e.g. 'default' (all-apis-access) and 'data-tables'.
   constructor(cfg) {
-    if (!cfg?.restConsumerKey || !cfg?.restConsumerSecret) {
-      throw new Five9RestError(
-        'Five9 New Platform API credentials are not configured — set FIVE9_CONSUMER_KEY / FIVE9_CONSUMER_SECRET (and optionally FIVE9_DOMAIN_ID, FIVE9_REST_REGION) as Wrangler secrets or in .dev.vars. Generate the Consumer Key/Secret under Admin Console > API Access Control.'
-      );
+    this.credentials = { ...(cfg?.restCredentials || {}) };
+    if (!this.credentials.default && cfg?.restConsumerKey) {
+      this.credentials.default = { key: cfg.restConsumerKey, secret: cfg.restConsumerSecret };
     }
-    this.consumerKey = cfg.restConsumerKey;
-    this.consumerSecret = cfg.restConsumerSecret;
-    this.domainId = cfg.restDomainId || '';
-    this.region = (cfg.restRegion || 'US').toUpperCase();
-    this.baseUrl = (cfg.restBaseUrl || REGION_BASE_URLS[this.region] || REGION_BASE_URLS.US).replace(/\/+$/, '');
+    this.domainId = cfg?.restDomainId || '';
+    this.region = (cfg?.restRegion || 'US').toUpperCase();
+    this.baseUrl = (cfg?.restBaseUrl || REGION_BASE_URLS[this.region] || REGION_BASE_URLS.US).replace(/\/+$/, '');
     this.maxRetries = 5;
-    this._token = null;
-    this._tokenExpiry = 0;
+    this._tokens = {}; // credentialName -> { token, expiry }
   }
 
-  // OAuth 2.0 client-credentials grant. Cached in-memory until ~30s before
-  // the token's own expiry.
-  async getToken() {
-    if (this._token && Date.now() < this._tokenExpiry) return this._token;
+  // OAuth 2.0 client-credentials grant for a named credential (default
+  // 'default'). Cached per credential until ~30s before expiry.
+  async getToken(credentialName = 'default') {
+    const cred = this.credentials[credentialName];
+    if (!cred?.key || !cred?.secret) {
+      throw new Five9RestError(
+        credentialName === 'default'
+          ? 'No New Platform credential configured — set FIVE9_CONSUMER_KEY / FIVE9_CONSUMER_SECRET (and FIVE9_DOMAIN_ID, FIVE9_REST_REGION). Generate them under Admin Console > API Access Control.'
+          : `No '${credentialName}' New Platform credential configured — set its consumer key/secret (e.g. FIVE9_DT_CONSUMER_KEY / FIVE9_DT_CONSUMER_SECRET for data-tables).`
+      );
+    }
+    const cached = this._tokens[credentialName];
+    if (cached && Date.now() < cached.expiry) return cached.token;
     const res = await fetch(`${this.baseUrl}/oauth2/v1/token`, {
       method: 'POST',
       headers: {
-        Authorization: 'Basic ' + btoa(`${this.consumerKey}:${this.consumerSecret}`),
+        Authorization: 'Basic ' + btoa(`${cred.key}:${cred.secret}`),
         'Content-Type': 'application/x-www-form-urlencoded',
         Accept: 'application/json',
       },
@@ -71,7 +78,7 @@ export class Five9RestClient {
     });
     const text = await res.text();
     if (!res.ok) {
-      throw new Five9RestError(`Five9 token request failed (HTTP ${res.status}): ${text.slice(0, 300)}`);
+      throw new Five9RestError(`Five9 token request failed for '${credentialName}' (HTTP ${res.status}): ${text.slice(0, 300)}`);
     }
     let data;
     try { data = JSON.parse(text); } catch {
@@ -80,11 +87,13 @@ export class Five9RestClient {
     if (!data.access_token) {
       throw new Five9RestError(`Five9 token response had no access_token: ${text.slice(0, 200)}`);
     }
-    this._token = data.access_token;
     const ttl = Number(data.expires_in) || 3600;
-    this._tokenExpiry = Date.now() + Math.max(30, ttl - 30) * 1000;
-    return this._token;
+    this._tokens[credentialName] = { token: data.access_token, expiry: Date.now() + Math.max(30, ttl - 30) * 1000 };
+    return data.access_token;
   }
+
+  // Which credential names are configured.
+  credentialNames() { return Object.keys(this.credentials).filter((n) => this.credentials[n]?.key); }
 
   // Substitute path placeholders and normalize to a leading slash.
   _resolvePath(path) {
@@ -96,9 +105,10 @@ export class Five9RestClient {
 
   // Authenticated REST call with rate-limit / retry handling. Returns
   // { status, etag, data } where data is parsed JSON (or text, or null).
-  async request(method, path, { query, body, ifMatch, headers } = {}) {
-    const token = await this.getToken();
-    let url = this.baseUrl + this._resolvePath(path);
+  async request(method, path, { query, body, ifMatch, headers, credential = 'default', baseUrl } = {}) {
+    const token = await this.getToken(credential);
+    const base = (baseUrl || this.baseUrl).replace(/\/+$/, '');
+    let url = base + this._resolvePath(path);
     if (query && Object.keys(query).length) {
       const qs = new URLSearchParams(query).toString();
       if (qs) url += (url.includes('?') ? '&' : '?') + qs;
@@ -150,13 +160,15 @@ export class Five9RestClient {
   }
 
   // Acquire a token and report connection metadata (no business call).
-  async checkConnection() {
-    await this.getToken();
+  async checkConnection(credential = 'default') {
+    await this.getToken(credential);
     return {
       ok: true,
       baseUrl: this.baseUrl,
       region: this.region,
       domainId: this.domainId || null,
+      credential,
+      configuredCredentials: this.credentialNames(),
       tokenType: 'Bearer',
       note: 'OAuth client-credentials token acquired successfully. This verifies API Access Control is enabled and the Consumer Key/Secret are valid.',
     };
@@ -165,12 +177,13 @@ export class Five9RestClient {
   // ---- Typed New Platform endpoints (paths verified against a live domain) ----
 
   // Cursor-paged GET. Returns { items, count, nextCursor } — pass nextCursor
-  // back as `cursor` to fetch the following page.
-  async listPaged(path, { cursor, limit } = {}) {
+  // back as `cursor` to fetch the following page. `credential` selects the API
+  // family credential (default 'default').
+  async listPaged(path, { cursor, limit, credential } = {}) {
     const query = {};
     if (limit) query.pageLimit = String(limit);
     if (cursor) query.pageCursor = cursor;
-    const { data } = await this.request('GET', path, { query });
+    const { data } = await this.request('GET', path, { query, credential });
     const items = Array.isArray(data?.items) ? data.items : [];
     let nextCursor = null;
     const next = data?.paging?.next;
@@ -211,5 +224,14 @@ export class Five9RestClient {
   async getDomainInfo() {
     const { data } = await this.request('GET', '/domains/v1/domains/{domainId}');
     return data;
+  }
+
+  // Data Tables — structured lookup tables (uses the 'data-tables' credential).
+  listDataTables(opts = {}) {
+    return this.listPaged('/data-tables/v1/domains/{domainId}/data-tables', { ...opts, credential: 'data-tables' });
+  }
+  getDataTableRows(tableId, opts = {}) {
+    if (!tableId) throw new Five9RestError('table_id is required.');
+    return this.listPaged(`/data-tables/v1/domains/{domainId}/data-tables/${encodeURIComponent(tableId)}/data`, { ...opts, credential: 'data-tables' });
   }
 }

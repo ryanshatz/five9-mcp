@@ -164,9 +164,9 @@ curl -X POST https://<your-worker>.workers.dev/mcp \
 
 ## 🧰 The toolbox
 
-**71 tools.** 🟢 = read (always safe) · ✏️ = write (changes your domain — the server tells AIs to confirm with you first)
+**73 tools.** 🟢 = read (always safe) · ✏️ = write (changes your domain — the server tells AIs to confirm with you first)
 
-> 65 SOAP tools (username/password) + 6 OAuth New Platform REST tools (Consumer Key/Secret — see [OAuth New Platform APIs](#-oauth-new-platform-apis)).
+> 65 SOAP tools (username/password) + 8 OAuth New Platform REST tools (Consumer Key/Secret — see [OAuth New Platform APIs](#-oauth-new-platform-apis)).
 
 <details open>
 <summary><strong>🔌 Connection & context</strong></summary>
@@ -307,6 +307,8 @@ These tools speak Five9's modern **OAuth 2.0 "New Platform" REST APIs**, not the
 | 🟢 | `list_np_prompts` | Voice prompts via the New Platform prompts API (paginated) |
 | 🟢 | `list_interaction_dispositions` | Dispositions via the interactions API (richer than the SOAP list; read-only) |
 | 🟢 | `get_domain_info` | Domain metadata (id, name, tenant, service endpoints) |
+| 🟢 | `list_data_tables` | Data Tables (structured lookup tables; no SOAP equivalent) — uses a separate `data-tables` credential |
+| 🟢 | `get_data_table_rows` | Rows of a Data Table by id (paginated) |
 
 </details>
 
@@ -318,14 +320,20 @@ Alongside the SOAP tools, the server can call Five9's newer **OAuth 2.0 New Plat
 - Configure them as env/secret vars (all separate from the SOAP creds):
 
 ```ini
-FIVE9_CONSUMER_KEY=...
+FIVE9_CONSUMER_KEY=...           # "All APIs access" family credential (default)
 FIVE9_CONSUMER_SECRET=...
-FIVE9_DOMAIN_ID=131109          # your Admin Console domain id
-FIVE9_REST_REGION=US            # US | US-ALPHA | CA | EU | IN | UK
+FIVE9_DOMAIN_ID=131109           # your Admin Console domain id
+FIVE9_REST_REGION=US             # US | US-ALPHA | CA | EU | IN | UK
 # or pin the base URL directly: FIVE9_REST_BASE_URL=https://api.prod.us.five9.net
+
+# Optional second credential for the "Data Tables access" family (its own key):
+FIVE9_DT_CONSUMER_KEY=...
+FIVE9_DT_CONSUMER_SECRET=...
 ```
 
 Then run `rest_check_connection` to confirm the token flow. What each credential can reach is governed by its **API family + scopes** — `all-apis-access` does *not* literally grant every service, and write access is per-service.
+
+**Multiple credentials / families.** Each API Access Control credential belongs to one **family** (mapped to an Apigee API Product), and that family decides which services the key may call. The server supports **named credentials**: `default` (from `FIVE9_CONSUMER_KEY`/`SECRET`) plus `data-tables` (from `FIVE9_DT_CONSUMER_KEY`/`SECRET`). The Data Tables tools use the `data-tables` credential automatically; `rest_call` and `rest_check_connection` accept a `credential` argument to pick one.
 
 > **Note:** Five9's getting-started doc lists the token endpoint as `/v1/auth/token`, but the live endpoint is **`/oauth2/v1/token`** (what this client uses).
 
@@ -389,6 +397,8 @@ FIVE9_CONSUMER_KEY=...
 FIVE9_CONSUMER_SECRET=...
 FIVE9_DOMAIN_ID=131109
 FIVE9_REST_REGION=US
+FIVE9_DT_CONSUMER_KEY=...        # optional: "Data Tables access" family
+FIVE9_DT_CONSUMER_SECRET=...
 ```
 
 Then open `http://localhost:8787/console`, paste `dev-local-token`, and run tools against your domain — or smoke-test from the CLI with the curl snippet above.
