@@ -8,8 +8,10 @@
 // deliberate future optimization, not needed for correctness.
 //
 // Docs: https://documentation.five9.com/bundle/api-docs (Getting Started).
-//   Auth:  POST https://{baseUrl}/v1/auth/token   (grant_type=client_credentials,
+//   Auth:  POST https://{baseUrl}/oauth2/v1/token  (grant_type=client_credentials,
 //          Consumer Key/Secret as HTTP Basic) -> { access_token, expires_in, … }
+//          (Five9's getting-started doc says /v1/auth/token, but the live
+//           endpoint is /oauth2/v1/token — verified against a real domain.)
 //   Calls: Authorization: Bearer {token}
 //   Rate limits: 5 req/s/user, 5 parallel users; 429 -> honor Retry-After then
 //                exponential backoff (1s,2s,4s,8s); 5xx -> backoff, ≤5 retries.
@@ -58,7 +60,7 @@ export class Five9RestClient {
   // the token's own expiry.
   async getToken() {
     if (this._token && Date.now() < this._tokenExpiry) return this._token;
-    const res = await fetch(`${this.baseUrl}/v1/auth/token`, {
+    const res = await fetch(`${this.baseUrl}/oauth2/v1/token`, {
       method: 'POST',
       headers: {
         Authorization: 'Basic ' + btoa(`${this.consumerKey}:${this.consumerSecret}`),
@@ -158,5 +160,56 @@ export class Five9RestClient {
       tokenType: 'Bearer',
       note: 'OAuth client-credentials token acquired successfully. This verifies API Access Control is enabled and the Consumer Key/Secret are valid.',
     };
+  }
+
+  // ---- Typed New Platform endpoints (paths verified against a live domain) ----
+
+  // Cursor-paged GET. Returns { items, count, nextCursor } — pass nextCursor
+  // back as `cursor` to fetch the following page.
+  async listPaged(path, { cursor, limit } = {}) {
+    const query = {};
+    if (limit) query.pageLimit = String(limit);
+    if (cursor) query.pageCursor = cursor;
+    const { data } = await this.request('GET', path, { query });
+    const items = Array.isArray(data?.items) ? data.items : [];
+    let nextCursor = null;
+    const next = data?.paging?.next;
+    if (next) { const m = /[?&]pageCursor=([^&]+)/.exec(next); nextCursor = m ? decodeURIComponent(m[1]) : null; }
+    return { items, count: items.length, nextCursor };
+  }
+
+  // Circles — list / get / create / delete. No SOAP equivalent.
+  listCircles(opts) { return this.listPaged('/circles/v1/domains/{domainId}/circles', opts); }
+  async getCircle(id) {
+    if (!id) throw new Five9RestError('circle_id is required.');
+    const { data } = await this.request('GET', `/circles/v1/domains/{domainId}/circles/${encodeURIComponent(id)}`);
+    return data;
+  }
+  async createCircle(fields) {
+    if (!fields?.name) throw new Five9RestError('name is required.');
+    const { data } = await this.request('POST', '/circles/v1/domains/{domainId}/circles', { body: fields });
+    return { ok: true, created: fields.name, id: data?.id ?? null, circle: data };
+  }
+  async deleteCircle(id) {
+    if (!id) throw new Five9RestError('circle_id is required.');
+    await this.request('DELETE', `/circles/v1/domains/{domainId}/circles/${encodeURIComponent(id)}`);
+    return { ok: true, deleted: id };
+  }
+
+  // New Platform voice prompts (read).
+  listNpPrompts(opts) { return this.listPaged('/prompts/v1/domains/{domainId}/prompts', opts); }
+
+  // Interaction dispositions (read-only via this API; richer than SOAP).
+  listDispositions(opts) { return this.listPaged('/interactions/v1/domains/{domainId}/dispositions', opts); }
+  async getDisposition(id) {
+    if (!id) throw new Five9RestError('disposition_id is required.');
+    const { data } = await this.request('GET', `/interactions/v1/domains/{domainId}/dispositions/${encodeURIComponent(id)}`);
+    return data;
+  }
+
+  // Domain metadata (id, name, tenant, service endpoints).
+  async getDomainInfo() {
+    const { data } = await this.request('GET', '/domains/v1/domains/{domainId}');
+    return data;
   }
 }

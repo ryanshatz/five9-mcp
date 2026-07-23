@@ -958,6 +958,66 @@ export const TOOLS = [
     rest: true,
     handler: (r, a) => r.request(a.method || 'GET', a.path, { query: a.query, body: a.body, ifMatch: a.if_match }),
   },
+  {
+    name: 'manage_circle',
+    description: 'Manage Five9 Circles via the OAuth New Platform API — there is NO SOAP equivalent, so this is the way to work with circles. action: "list" (paginated), "get" (by circle_id), "create" (name + optional fields), "delete" (by circle_id). Requires an OAuth API Access Control credential (Consumer Key/Secret) — run rest_check_connection first. This is NOT the SOAP username/password used by the other tools.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['list', 'get', 'create', 'delete'] },
+        circle_id: { type: 'string', description: 'Circle id (for get/delete)' },
+        name: { type: 'string', description: 'Circle name (for create)' },
+        fields: { type: 'object', description: 'Additional circle fields for create (e.g. useTags)', additionalProperties: true },
+        cursor: { type: 'string', description: 'Pagination cursor from a prior list (nextCursor)' },
+        limit: { type: 'number', description: 'Page size (default 100)' },
+      },
+      required: ['action'],
+      additionalProperties: false,
+    },
+    rest: true,
+    handler: (r, a) => {
+      if (a.action === 'list') return r.listCircles({ cursor: a.cursor, limit: a.limit });
+      if (a.action === 'get') return r.getCircle(a.circle_id);
+      if (a.action === 'create') return r.createCircle({ name: a.name, ...(a.fields || {}) });
+      return r.deleteCircle(a.circle_id);
+    },
+  },
+  {
+    name: 'list_np_prompts',
+    description: 'List voice prompts via the OAuth New Platform prompts API (paginated; returns richer objects than the SOAP list_prompts). Requires an OAuth API Access Control credential — see rest_check_connection. Pass cursor (from a prior nextCursor) to page.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        cursor: { type: 'string', description: 'Pagination cursor (nextCursor from a prior call)' },
+        limit: { type: 'number', description: 'Page size (default 100)' },
+      },
+      additionalProperties: false,
+    },
+    rest: true,
+    handler: (r, a) => r.listNpPrompts({ cursor: a.cursor, limit: a.limit }),
+  },
+  {
+    name: 'list_interaction_dispositions',
+    description: 'List call dispositions via the OAuth New Platform interactions API (paginated; richer fields than the SOAP list_dispositions). Pass disposition_id to fetch a single disposition (with its notification settings). Read-only. Requires an OAuth API Access Control credential — see rest_check_connection.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        disposition_id: { type: 'string', description: 'Fetch one disposition by id instead of listing' },
+        cursor: { type: 'string', description: 'Pagination cursor (nextCursor from a prior call)' },
+        limit: { type: 'number', description: 'Page size (default 100)' },
+      },
+      additionalProperties: false,
+    },
+    rest: true,
+    handler: (r, a) => (a.disposition_id ? r.getDisposition(a.disposition_id) : r.listDispositions({ cursor: a.cursor, limit: a.limit })),
+  },
+  {
+    name: 'get_domain_info',
+    description: 'Get New Platform domain metadata (domainId, name, tenant, and the domain\'s service endpoints) via the OAuth API. Requires an OAuth API Access Control credential — see rest_check_connection.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    rest: true,
+    handler: (r) => r.getDomainInfo(),
+  },
 ];
 
 export function toolDefs() {

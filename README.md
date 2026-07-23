@@ -164,7 +164,9 @@ curl -X POST https://<your-worker>.workers.dev/mcp \
 
 ## 🧰 The toolbox
 
-**65 tools.** 🟢 = read (always safe) · ✏️ = write (changes your domain — the server tells AIs to confirm with you first)
+**71 tools.** 🟢 = read (always safe) · ✏️ = write (changes your domain — the server tells AIs to confirm with you first)
+
+> 65 SOAP tools (username/password) + 6 OAuth New Platform REST tools (Consumer Key/Secret — see [OAuth New Platform APIs](#-oauth-new-platform-apis)).
 
 <details open>
 <summary><strong>🔌 Connection & context</strong></summary>
@@ -292,6 +294,41 @@ curl -X POST https://<your-worker>.workers.dev/mcp \
 
 </details>
 
+<details open>
+<summary><strong>🔐 OAuth New Platform APIs (REST)</strong> — need a separate credential, see below</summary>
+
+These tools speak Five9's modern **OAuth 2.0 "New Platform" REST APIs**, not the SOAP APIs the tools above use. They require an **API Access Control credential** (Consumer Key/Secret), *not* the SOAP username/password — see [OAuth New Platform APIs](#-oauth-new-platform-apis).
+
+| | Tool | What it does |
+|--|------|--------------|
+| 🟢 | `rest_check_connection` | Verify the OAuth credential — acquires a bearer token (no domain data) |
+| 🟢✏️ | `rest_call` | Generic authenticated call to any New Platform endpoint (method + path + body), with rate-limit/backoff and ETag support |
+| 🟢✏️ | `manage_circle` | Circles — list / get / create / delete (no SOAP equivalent) |
+| 🟢 | `list_np_prompts` | Voice prompts via the New Platform prompts API (paginated) |
+| 🟢 | `list_interaction_dispositions` | Dispositions via the interactions API (richer than the SOAP list; read-only) |
+| 🟢 | `get_domain_info` | Domain metadata (id, name, tenant, service endpoints) |
+
+</details>
+
+## 🔐 OAuth New Platform APIs
+
+Alongside the SOAP tools, the server can call Five9's newer **OAuth 2.0 New Platform REST APIs** (e.g. Circles, interactions, prompts, domain metadata). These use a **different credential** from the SOAP username/password:
+
+- An **API Access Control** *Consumer Key* and *Consumer Secret*, generated in the Five9 **Admin Console → API Access Control** (a Controlled-Availability feature). Generating one needs the `security → applications → Create applications` permission, and the account must be **migrated to Five9 Identity Service** (users with legacy API/Agent/Supervisor roles are excluded from migration until those roles are removed).
+- Configure them as env/secret vars (all separate from the SOAP creds):
+
+```ini
+FIVE9_CONSUMER_KEY=...
+FIVE9_CONSUMER_SECRET=...
+FIVE9_DOMAIN_ID=131109          # your Admin Console domain id
+FIVE9_REST_REGION=US            # US | US-ALPHA | CA | EU | IN | UK
+# or pin the base URL directly: FIVE9_REST_BASE_URL=https://api.prod.us.five9.net
+```
+
+Then run `rest_check_connection` to confirm the token flow. What each credential can reach is governed by its **API family + scopes** — `all-apis-access` does *not* literally grant every service, and write access is per-service.
+
+> **Note:** Five9's getting-started doc lists the token endpoint as `/v1/auth/token`, but the live endpoint is **`/oauth2/v1/token`** (what this client uses).
+
 ## 🎨 Customizing the operator context
 
 `src/about.js` holds the text served to connected AIs via the MCP `instructions` field and the `about` tool: who operates the server, why it exists, and how the AI should behave (e.g. *"confirm before write actions"*). **Edit it to describe your own deployment** — it ships with the original operator's context as an example.
@@ -346,6 +383,12 @@ Put local secrets in `.dev.vars` (gitignored):
 FIVE9_USERNAME=apiuser@yourdomain
 FIVE9_PASSWORD=...
 MCP_AUTH_TOKEN=dev-local-token
+
+# Optional — OAuth New Platform REST tools (separate credential; see below)
+FIVE9_CONSUMER_KEY=...
+FIVE9_CONSUMER_SECRET=...
+FIVE9_DOMAIN_ID=131109
+FIVE9_REST_REGION=US
 ```
 
 Then open `http://localhost:8787/console`, paste `dev-local-token`, and run tools against your domain — or smoke-test from the CLI with the curl snippet above.
