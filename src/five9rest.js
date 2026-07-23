@@ -1,0 +1,162 @@
+// Five9 "New Platform" REST client — OAuth 2.0 client-credentials, bearer-token
+// APIs (Enhanced Routing, Agent Sessions, …). Separate surface from the SOAP
+// Configuration/Statistics Web Services in five9.js.
+//
+// Design goals: match five9.js — zero dependencies, stateless per request. A
+// bearer token is fetched on demand and cached in-memory for the life of one
+// client instance (i.e. one Worker request); cross-request caching (KV) is a
+// deliberate future optimization, not needed for correctness.
+//
+// Docs: https://documentation.five9.com/bundle/api-docs (Getting Started).
+//   Auth:  POST https://{baseUrl}/v1/auth/token   (grant_type=client_credentials,
+//          Consumer Key/Secret as HTTP Basic) -> { access_token, expires_in, … }
+//   Calls: Authorization: Bearer {token}
+//   Rate limits: 5 req/s/user, 5 parallel users; 429 -> honor Retry-After then
+//                exponential backoff (1s,2s,4s,8s); 5xx -> backoff, ≤5 retries.
+//   Concurrency: ETag on reads, If-Match on writes -> 412 Precondition Failed.
+
+import { Five9Error } from './five9.js';
+
+// A REST error that the MCP layer surfaces gracefully (extends Five9Error so
+// index.js's `e instanceof Five9Error` catch turns it into an isError result).
+export class Five9RestError extends Five9Error {}
+
+// Region -> API base URL. See "Getting Started with Five9 New Platform APIs".
+export const REGION_BASE_URLS = {
+  US: 'https://api.prod.us.five9.net',
+  'US-ALPHA': 'https://api.alpha.us.five9.net',
+  CA: 'https://api.prod.ca.five9.net',
+  EU: 'https://api.prod.eu.five9.net',
+  IN: 'https://api.prod.in.five9.net',
+  UK: 'https://api.prod.uk.five9.net',
+};
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// Backoff schedule for 429/5xx retries: 1s, 2s, 4s, 8s, 8s…
+const backoffMs = (attempt) => [1000, 2000, 4000, 8000][Math.min(attempt, 3)];
+
+export class Five9RestClient {
+  // cfg: { restConsumerKey, restConsumerSecret, restDomainId, restRegion,
+  //        restBaseUrl } — see config.js
+  constructor(cfg) {
+    if (!cfg?.restConsumerKey || !cfg?.restConsumerSecret) {
+      throw new Five9RestError(
+        'Five9 New Platform API credentials are not configured — set FIVE9_CONSUMER_KEY / FIVE9_CONSUMER_SECRET (and optionally FIVE9_DOMAIN_ID, FIVE9_REST_REGION) as Wrangler secrets or in .dev.vars. Generate the Consumer Key/Secret under Admin Console > API Access Control.'
+      );
+    }
+    this.consumerKey = cfg.restConsumerKey;
+    this.consumerSecret = cfg.restConsumerSecret;
+    this.domainId = cfg.restDomainId || '';
+    this.region = (cfg.restRegion || 'US').toUpperCase();
+    this.baseUrl = (cfg.restBaseUrl || REGION_BASE_URLS[this.region] || REGION_BASE_URLS.US).replace(/\/+$/, '');
+    this.maxRetries = 5;
+    this._token = null;
+    this._tokenExpiry = 0;
+  }
+
+  // OAuth 2.0 client-credentials grant. Cached in-memory until ~30s before
+  // the token's own expiry.
+  async getToken() {
+    if (this._token && Date.now() < this._tokenExpiry) return this._token;
+    const res = await fetch(`${this.baseUrl}/v1/auth/token`, {
+      method: 'POST',
+      headers: {
+        Authorization: 'Basic ' + btoa(`${this.consumerKey}:${this.consumerSecret}`),
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Accept: 'application/json',
+      },
+      body: 'grant_type=client_credentials',
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      throw new Five9RestError(`Five9 token request failed (HTTP ${res.status}): ${text.slice(0, 300)}`);
+    }
+    let data;
+    try { data = JSON.parse(text); } catch {
+      throw new Five9RestError(`Five9 token response was not JSON: ${text.slice(0, 200)}`);
+    }
+    if (!data.access_token) {
+      throw new Five9RestError(`Five9 token response had no access_token: ${text.slice(0, 200)}`);
+    }
+    this._token = data.access_token;
+    const ttl = Number(data.expires_in) || 3600;
+    this._tokenExpiry = Date.now() + Math.max(30, ttl - 30) * 1000;
+    return this._token;
+  }
+
+  // Substitute path placeholders and normalize to a leading slash.
+  _resolvePath(path) {
+    let p = String(path || '');
+    p = p.replace(/\{domainId\}/g, encodeURIComponent(this.domainId));
+    if (!p.startsWith('/')) p = '/' + p;
+    return p;
+  }
+
+  // Authenticated REST call with rate-limit / retry handling. Returns
+  // { status, etag, data } where data is parsed JSON (or text, or null).
+  async request(method, path, { query, body, ifMatch, headers } = {}) {
+    const token = await this.getToken();
+    let url = this.baseUrl + this._resolvePath(path);
+    if (query && Object.keys(query).length) {
+      const qs = new URLSearchParams(query).toString();
+      if (qs) url += (url.includes('?') ? '&' : '?') + qs;
+    }
+    const h = { Authorization: `Bearer ${token}`, Accept: 'application/json', ...(headers || {}) };
+    let payload;
+    if (body !== undefined && body !== null) {
+      h['Content-Type'] = 'application/json';
+      payload = typeof body === 'string' ? body : JSON.stringify(body);
+    }
+    if (ifMatch) h['If-Match'] = ifMatch;
+
+    for (let attempt = 0; ; attempt++) {
+      const res = await fetch(url, { method: (method || 'GET').toUpperCase(), headers: h, body: payload });
+      // 429: honor Retry-After (seconds) if present, else backoff.
+      if (res.status === 429 && attempt < this.maxRetries) {
+        const ra = Number(res.headers.get('Retry-After'));
+        await sleep(Number.isFinite(ra) && ra > 0 ? ra * 1000 : backoffMs(attempt));
+        continue;
+      }
+      // 5xx: transient — retry with backoff.
+      if (res.status >= 500 && res.status < 600 && attempt < this.maxRetries) {
+        await sleep(backoffMs(attempt));
+        continue;
+      }
+      return this._parse(res, method, url);
+    }
+  }
+
+  async _parse(res, method, url) {
+    const etag = res.headers.get('ETag') || undefined;
+    const text = await res.text();
+    if (res.status === 412) {
+      throw new Five9RestError(`Five9 REST 412 Precondition Failed on ${method} ${url} — the resource changed since your ETag; re-read it and retry with the new If-Match.`);
+    }
+    if (!res.ok) {
+      throw new Five9RestError(`Five9 REST HTTP ${res.status} on ${method} ${url}: ${text.slice(0, 400)}`);
+    }
+    let data = null;
+    if (text) {
+      const ct = res.headers.get('Content-Type') || '';
+      if (ct.includes('json')) {
+        try { data = JSON.parse(text); } catch { data = text; }
+      } else {
+        data = text;
+      }
+    }
+    return { status: res.status, etag, data };
+  }
+
+  // Acquire a token and report connection metadata (no business call).
+  async checkConnection() {
+    await this.getToken();
+    return {
+      ok: true,
+      baseUrl: this.baseUrl,
+      region: this.region,
+      domainId: this.domainId || null,
+      tokenType: 'Bearer',
+      note: 'OAuth client-credentials token acquired successfully. This verifies API Access Control is enabled and the Consumer Key/Secret are valid.',
+    };
+  }
+}

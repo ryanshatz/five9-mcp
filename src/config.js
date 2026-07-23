@@ -17,10 +17,18 @@ export async function loadConfig(env) {
     adminVersion: env.FIVE9_ADMIN_VERSION || 'v13',
     supervisorVersion: env.FIVE9_SUPERVISOR_VERSION || 'v13',
     authToken: env.MCP_AUTH_TOKEN || stored?.authToken || '',
+    // New Platform REST APIs (OAuth 2.0 client-credentials) — separate creds
+    // from the SOAP username/password. See five9rest.js.
+    restConsumerKey: env.FIVE9_CONSUMER_KEY || stored?.restConsumerKey || '',
+    restConsumerSecret: env.FIVE9_CONSUMER_SECRET || stored?.restConsumerSecret || '',
+    restDomainId: env.FIVE9_DOMAIN_ID || stored?.restDomainId || '',
+    restRegion: env.FIVE9_REST_REGION || stored?.restRegion || 'US',
+    restBaseUrl: env.FIVE9_REST_BASE_URL || stored?.restBaseUrl || '',
     source: envManaged ? 'env' : (stored ? 'kv' : 'none'),
     hasKv: Boolean(env.CONFIG),
   };
   cfg.configured = Boolean(cfg.username && cfg.password);
+  cfg.restConfigured = Boolean(cfg.restConsumerKey && cfg.restConsumerSecret);
   return cfg;
 }
 

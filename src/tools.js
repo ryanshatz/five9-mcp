@@ -2,6 +2,7 @@
 // calls and returns plain JSON for the model.
 
 import { Five9Client } from './five9.js';
+import { Five9RestClient } from './five9rest.js';
 import { ABOUT } from './about.js';
 
 export const TOOLS = [
@@ -930,6 +931,33 @@ export const TOOLS = [
     },
     handler: (f9, a) => f9.managePromptWav(a.action, { name: a.name, wavBase64: a.wav_base64, description: a.description, language: a.language }),
   },
+
+  // ---- New Platform REST APIs (OAuth 2.0) — see five9rest.js ----
+  {
+    name: 'rest_check_connection',
+    description: 'Verify the Worker can obtain an OAuth 2.0 bearer token from the Five9 New Platform APIs (Enhanced Routing, Agent Sessions, etc.). Confirms API Access Control is enabled and the Consumer Key/Secret are valid. Separate from check_connection, which tests the SOAP username/password.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    rest: true,
+    handler: (r) => r.checkConnection(),
+  },
+  {
+    name: 'rest_call',
+    description: 'Make an authenticated call to any Five9 New Platform REST API endpoint (OAuth bearer token handled automatically, with rate-limit/backoff and ETag/If-Match concurrency support). Use this to explore endpoints before typed tools exist. path is relative to the regional base URL, e.g. "/v1/domains/{domainId}/..." ({domainId} is substituted from config). For writes, pass if_match with the ETag from a prior read to guard against conflicts.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        method: { type: 'string', enum: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'], description: 'HTTP method (default GET)' },
+        path: { type: 'string', description: 'Endpoint path relative to the base URL, e.g. "/v1/domains/{domainId}/skills". {domainId} is substituted automatically.' },
+        query: { type: 'object', description: 'Query-string parameters', additionalProperties: { type: 'string' } },
+        body: { type: 'object', description: 'JSON request body (for POST/PUT/PATCH)', additionalProperties: true },
+        if_match: { type: 'string', description: 'ETag value for optimistic-concurrency writes (sent as If-Match)' },
+      },
+      required: ['path'],
+      additionalProperties: false,
+    },
+    rest: true,
+    handler: (r, a) => r.request(a.method || 'GET', a.path, { query: a.query, body: a.body, ifMatch: a.if_match }),
+  },
 ];
 
 export function toolDefs() {
@@ -939,6 +967,7 @@ export function toolDefs() {
 export async function callTool(cfg, name, args) {
   const tool = TOOLS.find((t) => t.name === name);
   if (!tool) throw new Error(`Unknown tool: ${name}`);
+  if (tool.rest) return tool.handler(new Five9RestClient(cfg), args || {});
   const f9 = tool.five9 === false ? null : new Five9Client(cfg);
   return tool.handler(f9, args || {});
 }
