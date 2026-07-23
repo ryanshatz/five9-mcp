@@ -1,28 +1,9 @@
 // Web UI — a landing/setup page (GET /) and an interactive tool console
 // (GET /console). Pure server-rendered HTML with inline CSS/JS, no assets.
-
-// Grouping + write-flag metadata for display. Tools not listed fall into "Other".
-const GROUPS = [
-  { name: 'Connection & context', icon: '🔌', tools: ['about', 'check_connection', 'get_api_usage'] },
-  { name: 'Campaigns', icon: '📞', tools: ['list_campaigns', 'inspect_campaign', 'get_campaign_details', 'create_campaign', 'modify_campaign', 'rename_campaign', 'delete_campaign', 'control_campaign', 'manage_campaign_lists', 'manage_campaign_skills', 'manage_campaign_dnis', 'manage_campaign_dispositions', 'list_campaign_profiles', 'manage_campaign_profile'] },
-  { name: 'Dialing lists & leads', icon: '📋', tools: ['list_dialing_lists', 'create_list', 'delete_list', 'add_record_to_list', 'delete_record_from_list', 'get_import_result'] },
-  { name: 'CRM contacts', icon: '👤', tools: ['search_contacts', 'update_contact', 'delete_contact', 'list_contact_fields', 'manage_contact_field'] },
-  { name: 'Compliance', icon: '🚫', tools: ['manage_dnc', 'get_dialing_rules'] },
-  { name: 'Users & skills', icon: '🧑‍💼', tools: ['list_users', 'get_user_details', 'create_user', 'modify_user', 'delete_user', 'list_user_profiles', 'list_skills', 'get_skill_details', 'manage_skill', 'manage_user_skills', 'list_agent_groups', 'manage_agent_group', 'manage_reason_code'] },
-  { name: 'Domain configuration', icon: '🏢', tools: ['list_dispositions', 'manage_disposition', 'list_ivr_scripts', 'get_ivr_script', 'list_prompts', 'manage_tts_prompt', 'list_dnis', 'list_call_variables', 'manage_call_variable', 'list_web_connectors', 'manage_speed_dial', 'get_vcc_configuration'] },
-  { name: 'Reporting & real-time', icon: '📈', tools: ['run_report', 'get_report_result', 'get_realtime_stats'] },
-];
-
-const WRITE_TOOLS = new Set([
-  'control_campaign', 'manage_campaign_lists', 'create_list', 'delete_list',
-  'add_record_to_list', 'delete_record_from_list', 'update_contact', 'manage_dnc',
-  'create_campaign', 'modify_campaign', 'rename_campaign', 'delete_campaign',
-  'manage_campaign_skills', 'manage_campaign_dnis', 'manage_campaign_dispositions',
-  'manage_campaign_profile', 'manage_skill', 'manage_user_skills', 'create_user',
-  'modify_user', 'delete_user', 'manage_disposition', 'manage_contact_field',
-  'delete_contact', 'manage_tts_prompt', 'manage_agent_group', 'manage_call_variable',
-  'manage_speed_dial', 'manage_reason_code',
-]);
+//
+// Grouping + write-flag metadata lives in tools.js (next to the tools) and is
+// imported here — adding a tool and giving it a UI home happen in one file.
+import { TOOL_GROUPS as GROUPS, WRITE_TOOLS } from './tools.js';
 
 function esc(s) {
   return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
