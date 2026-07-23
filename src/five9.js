@@ -229,32 +229,75 @@ export class Five9Client {
     return toArray(r.return);
   }
 
-  // Adds a single record to a dialing list via addToListCsv (async import on
-  // the Five9 side — returns an import identifier, not a synchronous result).
-  async addRecordToList(listName, fields, keyField) {
-    const names = Object.keys(fields || {});
-    if (!names.length) throw new Five9Error('fields must contain at least one field (e.g. {"number1": "5551234567"}).');
-    const key = keyField || (names.includes('number1') ? 'number1' : names[0]);
+  // Bulk list import via addToListCsv (multi-row CSV). Returns an import
+  // identifier to poll with get_import_result. `records` is an array of
+  // field->value objects; all rows share the union of columns (first-seen order).
+  async addRecordsToList(listName, records, opts = {}) {
+    const rows = toArray(records).filter((r) => r && typeof r === 'object' && Object.keys(r).length);
+    if (!rows.length) throw new Five9Error('records must contain at least one record (e.g. [{"number1": "5551234567"}]).');
+    const names = [];
+    for (const rec of rows) for (const n of Object.keys(rec)) if (!names.includes(n)) names.push(n);
+    const key = opts.keyField || (names.includes('number1') ? 'number1' : names[0]);
     const mappings = names.map((n, i) =>
       `<fieldsMapping><columnNumber>${i + 1}</columnNumber><fieldName>${escapeXml(n)}</fieldName>` +
       `<key>${n === key}</key></fieldsMapping>`).join('');
-    const csvLine = names.map((n) => {
-      const v = String(fields[n] ?? '');
+    const csv = rows.map((rec) => names.map((n) => {
+      const v = String(rec[n] ?? '');
       return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
-    }).join(',');
+    }).join(',')).join('\n');
+    const crmAddMode = opts.crmAddMode || 'ADD_NEW';
+    const crmUpdateMode = opts.crmUpdateMode || 'UPDATE_FIRST';
+    const listAddMode = opts.listAddMode || 'ADD_FIRST';
+    const cleanFirst = opts.cleanListBeforeUpdate ? 'true' : 'false';
     const r = await this.admin('addToListCsv',
       `<listName>${escapeXml(listName)}</listName>` +
-      // Element order follows the WSDL sequence: basicImportSettings fields
-      // (fieldsMapping, separator, skipHeaderLine), then the listUpdateSettings
-      // extension (cleanListBeforeUpdate, crmAddMode, crmUpdateMode, listAddMode).
+      // listUpdateSettings order: basicImportSettings (fieldsMapping, separator,
+      // skipHeaderLine), then the extension (cleanListBeforeUpdate, crmAddMode,
+      // crmUpdateMode, listAddMode).
       `<listUpdateSettings>${mappings}<separator>,</separator><skipHeaderLine>false</skipHeaderLine>` +
-      `<cleanListBeforeUpdate>false</cleanListBeforeUpdate><crmAddMode>ADD_NEW</crmAddMode>` +
-      `<crmUpdateMode>UPDATE_FIRST</crmUpdateMode><listAddMode>ADD_FIRST</listAddMode></listUpdateSettings>` +
-      `<csvData>${escapeXml(csvLine)}</csvData>`);
-    // addToListCsv returns { identifier } — flatten to the bare string so it
-    // can be passed straight to get_import_result (which wants a string id).
-    return { submitted: true, list: listName, keyField: key, importIdentifier: r.return?.identifier ?? r.return ?? null,
-      note: 'Five9 processes list imports asynchronously; the record may take a moment to appear.' };
+      `<cleanListBeforeUpdate>${cleanFirst}</cleanListBeforeUpdate><crmAddMode>${escapeXml(crmAddMode)}</crmAddMode>` +
+      `<crmUpdateMode>${escapeXml(crmUpdateMode)}</crmUpdateMode><listAddMode>${escapeXml(listAddMode)}</listAddMode></listUpdateSettings>` +
+      `<csvData>${escapeXml(csv)}</csvData>`);
+    return { submitted: true, list: listName, keyField: key, recordCount: rows.length,
+      importIdentifier: r.return?.identifier ?? r.return ?? null,
+      note: 'Five9 processes list imports asynchronously; poll get_import_result with the importIdentifier.' };
+  }
+
+  // Single-record convenience wrapper over addRecordsToList.
+  async addRecordToList(listName, fields, keyField) {
+    if (!fields || !Object.keys(fields).length) throw new Five9Error('fields must contain at least one field (e.g. {"number1": "5551234567"}).');
+    return this.addRecordsToList(listName, [fields], { keyField });
+  }
+
+  // Bulk CRM contact update via updateContactsCsv (async import; poll
+  // get_import_result with type "crm"). keyFields identify the contact(s) to
+  // match; every other column is written.
+  async updateContactsBulk(records, keyFields, opts = {}) {
+    const rows = toArray(records).filter((r) => r && typeof r === 'object' && Object.keys(r).length);
+    if (!rows.length) throw new Five9Error('records must contain at least one record.');
+    const keys = toArray(keyFields).filter(Boolean);
+    if (!keys.length) throw new Five9Error('key_fields must name at least one field used to match contacts (e.g. ["number1"]).');
+    const names = [];
+    for (const rec of rows) for (const n of Object.keys(rec)) if (!names.includes(n)) names.push(n);
+    for (const k of keys) if (!names.includes(k)) throw new Five9Error(`key field "${k}" is not present in the records.`);
+    const mappings = names.map((n, i) =>
+      `<fieldsMapping><columnNumber>${i + 1}</columnNumber><fieldName>${escapeXml(n)}</fieldName>` +
+      `<key>${keys.includes(n)}</key></fieldsMapping>`).join('');
+    const csv = rows.map((rec) => names.map((n) => {
+      const v = String(rec[n] ?? '');
+      return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+    }).join(',')).join('\n');
+    const crmAddMode = opts.crmAddMode || 'DONT_ADD';
+    const crmUpdateMode = opts.crmUpdateMode || 'UPDATE_FIRST';
+    // crmUpdateSettings order: basicImportSettings (fieldsMapping, separator,
+    // skipHeaderLine), then crmAddMode, crmUpdateMode.
+    const r = await this.admin('updateContactsCsv',
+      `<crmUpdateSettings>${mappings}<separator>,</separator><skipHeaderLine>false</skipHeaderLine>` +
+      `<crmAddMode>${escapeXml(crmAddMode)}</crmAddMode><crmUpdateMode>${escapeXml(crmUpdateMode)}</crmUpdateMode></crmUpdateSettings>` +
+      `<csvData>${escapeXml(csv)}</csvData>`);
+    return { submitted: true, recordCount: rows.length, keyFields: keys,
+      importIdentifier: r.return?.identifier ?? r.return ?? null,
+      note: 'CRM update runs asynchronously; poll get_import_result with type "crm".' };
   }
 
   async searchContacts(criteria) {
@@ -707,6 +750,16 @@ export class Five9Client {
   async deleteContactField(name) {
     await this.admin('deleteContactField', `<fieldName>${escapeXml(name)}</fieldName>`);
     return { ok: true, deleted: name };
+  }
+
+  // Modify a CRM contact field (read-modify-write; e.g. change displayAs).
+  async modifyContactField(name, changes) {
+    const all = await this.getContactFields(name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    const current = all.find((f) => f.name === name);
+    if (!current) throw new Five9Error(`Contact field "${name}" not found.`);
+    const merged = mergeChanges(current, changes);
+    await this.admin('modifyContactField', xmlOf(merged, 'field'));
+    return { ok: true, field: name, applied: Object.keys(changes || {}) };
   }
 
   async deleteContact(criteria) {
