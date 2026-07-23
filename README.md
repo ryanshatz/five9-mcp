@@ -10,7 +10,7 @@ An open-source [MCP](https://modelcontextprotocol.io) server that connects Claud
 [![Runtime](https://img.shields.io/badge/Cloudflare-Workers-f38020?logo=cloudflare&logoColor=white)](https://workers.cloudflare.com)
 [![Dependencies](https://img.shields.io/badge/dependencies-0-16a34a)](package.json)
 [![MCP](https://img.shields.io/badge/protocol-MCP%20streamable%20HTTP-0ea5e9)](https://modelcontextprotocol.io)
-[![Tools](https://img.shields.io/badge/tools-60-8b5cf6)](#-the-toolbox)
+[![Tools](https://img.shields.io/badge/tools-65-8b5cf6)](#-the-toolbox)
 
 [Quick start](#-quick-start--no-terminal-needed) · [Connect Claude](#connect-claude-web--desktop) · [Connect ChatGPT](#connect-chatgpt) · [Tools](#-the-toolbox) · [Architecture](#%EF%B8%8F-architecture)
 
@@ -164,7 +164,7 @@ curl -X POST https://<your-worker>.workers.dev/mcp \
 
 ## 🧰 The toolbox
 
-**60 tools.** 🟢 = read (always safe) · ✏️ = write (changes your domain — the server tells AIs to confirm with you first)
+**65 tools.** 🟢 = read (always safe) · ✏️ = write (changes your domain — the server tells AIs to confirm with you first)
 
 <details open>
 <summary><strong>🔌 Connection & context</strong></summary>
@@ -196,6 +196,7 @@ curl -X POST https://<your-worker>.workers.dev/mcp \
 | ✏️ | `manage_campaign_dispositions` | Add/remove agent dispositions on a campaign |
 | 🟢 | `list_campaign_profiles` | List campaign profiles (ANI, attempts, timeouts) |
 | ✏️ | `manage_campaign_profile` | Create / modify / delete campaign profiles |
+| ✏️ | `manage_campaign_profile_filter` | Read / edit a profile's CRM record-selection criteria and dialing order |
 
 </details>
 
@@ -251,6 +252,7 @@ curl -X POST https://<your-worker>.workers.dev/mcp \
 | 🟢 | `list_skills` / `get_skill_details` | Skills, with or without assigned users |
 | ✏️ | `manage_skill` | Create / modify / delete skills |
 | ✏️ | `manage_user_skills` | Assign skills to users, set levels |
+| ✏️ | `set_user_roles` | Grant / revoke roles (agent, admin, supervisor, reporting, crmManager) with permission tabs |
 | 🟢 | `list_agent_groups` | Agent groups + members |
 | ✏️ | `manage_agent_group` | Create / delete groups, add/remove agents |
 | ✏️ | `manage_reason_code` | Not Ready / Logout reason codes |
@@ -265,12 +267,15 @@ curl -X POST https://<your-worker>.workers.dev/mcp \
 | 🟢 | `list_dispositions` | Call dispositions and their settings |
 | ✏️ | `manage_disposition` | Create / modify / rename / delete dispositions (incl. redial timers) |
 | 🟢 | `list_ivr_scripts` / `get_ivr_script` | IVR scripts — metadata, or one script's full XML |
+| ✏️ | `manage_ivr_script` | Create / modify / delete IVR scripts (push a full xmlDefinition) |
 | 🟢 | `list_prompts` | Voice prompts on the domain |
 | ✏️ | `manage_tts_prompt` | Create / modify / delete text-to-speech prompts |
+| ✏️ | `manage_wav_prompt` | Create / modify / delete pre-recorded WAV prompts (base64; G.711 µ-law 8kHz mono) |
 | 🟢 | `list_dnis` | Provisioned inbound numbers (optionally unassigned only) |
 | 🟢 | `list_call_variables` | Call variables and variable groups |
 | ✏️ | `manage_call_variable` | Create / delete custom call variables |
 | 🟢 | `list_web_connectors` | Web connector integrations |
+| ✏️ | `manage_web_connector` | Create / delete web connectors (URL pops agents trigger) |
 | ✏️ | `manage_speed_dial` | List / create / delete speed-dial codes |
 | 🟢 | `get_vcc_configuration` | Domain-level VCC settings |
 
