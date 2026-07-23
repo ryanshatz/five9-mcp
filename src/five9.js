@@ -237,6 +237,9 @@ export class Five9Client {
     if (!rows.length) throw new Five9Error('records must contain at least one record (e.g. [{"number1": "5551234567"}]).');
     const names = [];
     for (const rec of rows) for (const n of Object.keys(rec)) if (!names.includes(n)) names.push(n);
+    if (opts.keyField && !names.includes(opts.keyField)) {
+      throw new Five9Error(`key_field "${opts.keyField}" is not present in any record — include it in the records or omit key_field.`);
+    }
     const key = opts.keyField || (names.includes('number1') ? 'number1' : names[0]);
     const mappings = names.map((n, i) =>
       `<fieldsMapping><columnNumber>${i + 1}</columnNumber><fieldName>${escapeXml(n)}</fieldName>` +
