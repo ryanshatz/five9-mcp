@@ -39,7 +39,7 @@ Deploy it and your Worker serves more than an API:
 |------|--------------|
 | `/` | A polished landing page: live server status, this setup guide, click-by-click AI connection walkthroughs, and the full tool catalog |
 | `/setup` | The **setup wizard** — enter Five9 credentials in your browser, get them verified live, receive your access key. No terminal, no secrets commands |
-| `/console` | An **interactive console** — paste your access key, pick any of the tools, fill a generated form, and run it against your live Five9 domain right from the browser |
+| `/console` | An **interactive console** — paste your access key, pick any of the 73 grouped tools, fill a form generated from its schema, and run it against your live Five9 domain right from the browser |
 | `/mcp` | The MCP endpoint itself (streamable HTTP, stateless) |
 | `/health` | JSON healthcheck |
 

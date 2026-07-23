@@ -506,7 +506,11 @@ export class Five9Client {
         const r = await this.admin(method, arg);
         return { campaignKind: kind, ...(r.return || {}) };
       } catch (e) {
-        if (!/should be one of|WrongCampaignType/i.test(e.message)) throw e;
+        // Wrong-campaign-type faults vary by endpoint: getOutboundCampaign says
+        // "is INBOUND but should be OUTBOUND", while other endpoints say
+        // "should be one of [OUTBOUND]". Match the shared "but should be" so we
+        // fall through to the next campaign type instead of failing.
+        if (!/but should be|should be one of|WrongCampaignType/i.test(e.message)) throw e;
       }
     }
     throw new Five9Error(`Campaign "${name}" was not found as outbound, inbound, or autodial.`);
