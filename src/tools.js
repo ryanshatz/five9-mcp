@@ -336,21 +336,24 @@ export const TOOLS = [
   },
   {
     name: 'manage_contact_field',
-    description: 'Create or delete a CRM contact field. Create: name + type (STRING, NUMBER, DATE, PHONE, EMAIL, BOOLEAN, etc.), optional displayAs (Short/Long/Invisible).',
+    description: 'Create, modify, or delete a CRM contact field. Create: name + type (STRING, NUMBER, DATE, PHONE, EMAIL, BOOLEAN, etc.), optional displayAs (Short/Long/Invisible). Modify: name + the fields to change (e.g. display_as, or changes: {"displayAs": "Invisible"}) — read-modify-write, so unspecified fields are preserved. System fields cannot be modified.',
     inputSchema: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['create', 'delete'] },
+        action: { type: 'string', enum: ['create', 'modify', 'delete'] },
         name: { type: 'string' },
         type: { type: 'string', enum: ['STRING', 'NUMBER', 'DATE', 'TIME', 'DATE_TIME', 'CURRENCY', 'BOOLEAN', 'PERCENT', 'EMAIL', 'URL', 'PHONE', 'TIME_PERIOD'] },
         display_as: { type: 'string', enum: ['Short', 'Long', 'Invisible'] },
+        changes: { type: 'object', description: 'For modify: field → new value using contactField field names (displayAs, type, mapTo)', additionalProperties: true },
       },
       required: ['action', 'name'],
       additionalProperties: false,
     },
-    handler: (f9, a) => (a.action === 'create'
-      ? f9.createContactField({ name: a.name, type: a.type, displayAs: a.display_as })
-      : f9.deleteContactField(a.name)),
+    handler: (f9, a) => {
+      if (a.action === 'create') return f9.createContactField({ name: a.name, type: a.type, displayAs: a.display_as });
+      if (a.action === 'modify') return f9.modifyContactField(a.name, a.changes || { ...(a.display_as ? { displayAs: a.display_as } : {}), ...(a.type ? { type: a.type } : {}) });
+      return f9.deleteContactField(a.name);
+    },
   },
   {
     name: 'delete_contact',
@@ -762,19 +765,74 @@ export const TOOLS = [
   },
   {
     name: 'get_realtime_stats',
-    description: 'Get real-time contact center statistics from the Five9 Statistics API. statistic_type picks the view: AgentState (who is on a call / ready / not ready right now), ACDStatus (queue depth and wait times per skill), CampaignState, InboundCampaignStatistics, OutboundCampaignStatistics, AgentStatistics (per-agent daily performance).',
+    description: 'Get real-time contact center statistics from the Five9 Statistics API. statistic_type picks the view: AgentState (who is on a call / ready / not ready right now), ACDStatus (queue depth and wait times per skill), CampaignState, InboundCampaignStatistics, OutboundCampaignStatistics, OutboundCampaignManager (list/dialer manager view), AutodialCampaignStatistics, AgentStatistics (per-agent daily performance).',
     inputSchema: {
       type: 'object',
       properties: {
         statistic_type: {
           type: 'string',
-          enum: ['AgentState', 'ACDStatus', 'CampaignState', 'InboundCampaignStatistics', 'OutboundCampaignStatistics', 'AgentStatistics'],
+          enum: ['AgentState', 'ACDStatus', 'CampaignState', 'InboundCampaignStatistics', 'OutboundCampaignStatistics', 'OutboundCampaignManager', 'AutodialCampaignStatistics', 'AgentStatistics'],
         },
       },
       required: ['statistic_type'],
       additionalProperties: false,
     },
     handler: (f9, a) => f9.getRealtimeStats(a.statistic_type),
+  },
+  {
+    name: 'add_records_to_list',
+    description: 'Bulk-add many records (leads) to a Five9 dialing list in one async import. records is an array of contact field→value objects (e.g. [{"number1":"5551230001","first_name":"A"},{"number1":"5551230002"}]); columns are the union of all records\' fields. number1 is the standard primary phone field and default key. Returns an importIdentifier to poll with get_import_result. Inserts real leads that may be dialed — confirm with the user first.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        list_name: { type: 'string', description: 'Exact dialing list name' },
+        records: {
+          type: 'array',
+          description: 'Array of contact field→value objects (one per lead).',
+          items: { type: 'object', additionalProperties: { type: 'string' } },
+          minItems: 1,
+        },
+        key_field: { type: 'string', description: 'Field used to match existing contacts (default: number1)' },
+        crm_add_mode: { type: 'string', enum: ['ADD_NEW', 'DONT_ADD'], description: 'How to handle new CRM contacts (default ADD_NEW)' },
+        crm_update_mode: { type: 'string', enum: ['UPDATE_FIRST', 'UPDATE_ALL', 'UPDATE_SOLE_MATCHES'], description: 'How to update matching CRM contacts (default UPDATE_FIRST)' },
+        list_add_mode: { type: 'string', enum: ['ADD_FIRST', 'ADD_ALL', 'ADD_IF_SOLE_CRM_MATCH'], description: 'How records join the list (default ADD_FIRST)' },
+        clean_list_before_update: { type: 'boolean', description: 'Empty the list before importing (default false)' },
+      },
+      required: ['list_name', 'records'],
+      additionalProperties: false,
+    },
+    handler: (f9, a) => f9.addRecordsToList(a.list_name, a.records, {
+      keyField: a.key_field, crmAddMode: a.crm_add_mode, crmUpdateMode: a.crm_update_mode,
+      listAddMode: a.list_add_mode, cleanListBeforeUpdate: a.clean_list_before_update,
+    }),
+  },
+  {
+    name: 'bulk_update_contacts',
+    description: 'Update many Five9 CRM contacts in one async import. records is an array of field→value objects; key_fields names the field(s) that identify which contact each row updates (e.g. ["number1"]). Every non-key field is written. Does not create contacts by default (crm_add_mode DONT_ADD). Returns an importIdentifier — poll get_import_result with type "crm".',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        records: {
+          type: 'array',
+          description: 'Array of field→value objects; each must include the key field(s).',
+          items: { type: 'object', additionalProperties: { type: 'string' } },
+          minItems: 1,
+        },
+        key_fields: {
+          type: 'array',
+          description: 'Field name(s) that identify the contact to update (e.g. ["number1"]).',
+          items: { type: 'string' },
+          minItems: 1,
+        },
+        crm_add_mode: { type: 'string', enum: ['DONT_ADD', 'ADD_NEW'], description: 'Whether to insert rows with no match (default DONT_ADD)' },
+        crm_update_mode: { type: 'string', enum: ['UPDATE_FIRST', 'UPDATE_ALL', 'UPDATE_SOLE_MATCHES'], description: 'How to update matching contacts (default UPDATE_FIRST)' },
+      },
+      required: ['records', 'key_fields'],
+      additionalProperties: false,
+    },
+    handler: (f9, a) => f9.updateContactsBulk(a.records, a.key_fields, {
+      crmAddMode: a.crm_add_mode, crmUpdateMode: a.crm_update_mode,
+    }),
   },
 ];
 

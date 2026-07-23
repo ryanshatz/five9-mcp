@@ -10,9 +10,9 @@ An open-source [MCP](https://modelcontextprotocol.io) server that connects Claud
 [![Runtime](https://img.shields.io/badge/Cloudflare-Workers-f38020?logo=cloudflare&logoColor=white)](https://workers.cloudflare.com)
 [![Dependencies](https://img.shields.io/badge/dependencies-0-16a34a)](package.json)
 [![MCP](https://img.shields.io/badge/protocol-MCP%20streamable%20HTTP-0ea5e9)](https://modelcontextprotocol.io)
-[![Tools](https://img.shields.io/badge/tools-58-8b5cf6)](#-the-toolbox-58-tools)
+[![Tools](https://img.shields.io/badge/tools-60-8b5cf6)](#-the-toolbox)
 
-[Quick start](#-quick-start--no-terminal-needed) · [Connect Claude](#connect-claude-web--desktop) · [Connect ChatGPT](#connect-chatgpt) · [Tools](#-the-toolbox-58-tools) · [Architecture](#%EF%B8%8F-architecture)
+[Quick start](#-quick-start--no-terminal-needed) · [Connect Claude](#connect-claude-web--desktop) · [Connect ChatGPT](#connect-chatgpt) · [Tools](#-the-toolbox) · [Architecture](#%EF%B8%8F-architecture)
 
 <img src="docs/landing.png" alt="five9-mcp landing page" width="820">
 
@@ -39,7 +39,7 @@ Deploy it and your Worker serves more than an API:
 |------|--------------|
 | `/` | A polished landing page: live server status, this setup guide, click-by-click AI connection walkthroughs, and the full tool catalog |
 | `/setup` | The **setup wizard** — enter Five9 credentials in your browser, get them verified live, receive your access key. No terminal, no secrets commands |
-| `/console` | An **interactive console** — paste your access key, pick any of the 58 tools, fill a generated form, and run it against your live Five9 domain right from the browser |
+| `/console` | An **interactive console** — paste your access key, pick any of the tools, fill a generated form, and run it against your live Five9 domain right from the browser |
 | `/mcp` | The MCP endpoint itself (streamable HTTP, stateless) |
 | `/health` | JSON healthcheck |
 
@@ -162,9 +162,9 @@ curl -X POST https://<your-worker>.workers.dev/mcp \
 
 </details>
 
-## 🧰 The toolbox (58 tools)
+## 🧰 The toolbox
 
-🟢 = read (always safe) · ✏️ = write (changes your domain — the server tells AIs to confirm with you first)
+**60 tools.** 🟢 = read (always safe) · ✏️ = write (changes your domain — the server tells AIs to confirm with you first)
 
 <details open>
 <summary><strong>🔌 Connection & context</strong></summary>
@@ -207,6 +207,7 @@ curl -X POST https://<your-worker>.workers.dev/mcp \
 | 🟢 | `list_dialing_lists` | List dialing lists + record counts |
 | ✏️ | `create_list` / `delete_list` | Create or delete a dialing list |
 | ✏️ | `add_record_to_list` | Push a lead into a list (async import) |
+| ✏️ | `add_records_to_list` | Bulk-add many leads in one async import (configurable CRM/list modes) |
 | ✏️ | `delete_record_from_list` | Remove matching records from a list |
 | 🟢 | `get_import_result` | Outcome of an async list/CRM import |
 
@@ -219,9 +220,10 @@ curl -X POST https://<your-worker>.workers.dev/mcp \
 |--|------|--------------|
 | 🟢 | `search_contacts` | Look up contacts by exact field values |
 | ✏️ | `update_contact` | Update a contact (sole-match safety by default) |
+| ✏️ | `bulk_update_contacts` | Update many CRM contacts in one async import (poll with type "crm") |
 | ✏️ | `delete_contact` | Delete a contact (only when exactly one matches) |
 | 🟢 | `list_contact_fields` | The domain's contact field schema |
-| ✏️ | `manage_contact_field` | Create / delete custom CRM fields |
+| ✏️ | `manage_contact_field` | Create / modify / delete custom CRM fields |
 
 </details>
 
@@ -281,7 +283,7 @@ curl -X POST https://<your-worker>.workers.dev/mcp \
 |--|------|--------------|
 | 🟢 | `run_report` | Kick off any report by folder + name, optional time range |
 | 🟢 | `get_report_result` | Poll for the report's CSV output |
-| 🟢 | `get_realtime_stats` | AgentState, ACDStatus, CampaignState, campaign statistics |
+| 🟢 | `get_realtime_stats` | AgentState, ACDStatus, CampaignState, campaign statistics (incl. dialer-manager & autodial views) |
 
 </details>
 
