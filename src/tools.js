@@ -795,7 +795,7 @@ export const TOOLS = [
         key_field: { type: 'string', description: 'Field used to match existing contacts (default: number1)' },
         crm_add_mode: { type: 'string', enum: ['ADD_NEW', 'DONT_ADD'], description: 'How to handle new CRM contacts (default ADD_NEW)' },
         crm_update_mode: { type: 'string', enum: ['UPDATE_FIRST', 'UPDATE_ALL', 'UPDATE_SOLE_MATCHES'], description: 'How to update matching CRM contacts (default UPDATE_FIRST)' },
-        list_add_mode: { type: 'string', enum: ['ADD_FIRST', 'ADD_ALL', 'ADD_SOLE_MATCHES'], description: 'How records join the list (default ADD_FIRST)' },
+        list_add_mode: { type: 'string', enum: ['ADD_FIRST', 'ADD_ALL', 'ADD_IF_SOLE_CRM_MATCH'], description: 'How records join the list (default ADD_FIRST)' },
         clean_list_before_update: { type: 'boolean', description: 'Empty the list before importing (default false)' },
       },
       required: ['list_name', 'records'],
