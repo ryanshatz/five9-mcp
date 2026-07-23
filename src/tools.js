@@ -834,6 +834,102 @@ export const TOOLS = [
       crmAddMode: a.crm_add_mode, crmUpdateMode: a.crm_update_mode,
     }),
   },
+  {
+    name: 'set_user_roles',
+    description: 'Grant and/or revoke Five9 roles on a user. add enables roles (agent, admin, supervisor, reporting, crmManager); remove revokes them. The supervisor role requires at least one viewable tab — by default it grants Agents/Campaigns/CallMonitoring, or pass permissions.supervisor with an explicit list of tabs (Users, Agents, CallMonitoring, Stations, Campaigns, CampaignManagement, AllSkills, BargeInMonitor, WhisperMonitor, ReviewVoiceRecordings, …). Use get_user_details to see current roles.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        user_name: { type: 'string', description: 'Exact Five9 username' },
+        add: { type: 'array', items: { type: 'string', enum: ['agent', 'admin', 'supervisor', 'reporting', 'crmManager'] }, description: 'Roles to enable' },
+        remove: { type: 'array', items: { type: 'string', enum: ['agent', 'admin', 'supervisor', 'reporting', 'crmManager'] }, description: 'Roles to revoke' },
+        permissions: { type: 'object', description: 'Optional per-role permission tabs, e.g. {"supervisor": ["Agents","Campaigns"]}', additionalProperties: true },
+      },
+      required: ['user_name'],
+      additionalProperties: false,
+    },
+    handler: (f9, a) => f9.setUserRoles(a.user_name, { add: a.add, remove: a.remove, permissions: a.permissions }),
+  },
+  {
+    name: 'manage_web_connector',
+    description: 'Create or delete a web connector (URL pop / webhook agents trigger). Create: name + url, optional description, trigger (OnCallAccepted, OnCallDisconnected, ManuallyStarted [default], ManuallyStartedAllowDuringPreviews, OnPreview), agent_application (EmbeddedBrowser [default] or ExternalBrowser), post_method, execute_in_browser.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['create', 'delete'] },
+        name: { type: 'string', description: 'Connector name' },
+        url: { type: 'string', description: 'Target URL (create)' },
+        description: { type: 'string' },
+        trigger: { type: 'string', enum: ['OnCallAccepted', 'OnCallDisconnected', 'ManuallyStarted', 'ManuallyStartedAllowDuringPreviews', 'OnPreview'] },
+        agent_application: { type: 'string', enum: ['EmbeddedBrowser', 'ExternalBrowser'] },
+        post_method: { type: 'boolean' },
+        execute_in_browser: { type: 'boolean' },
+      },
+      required: ['action', 'name'],
+      additionalProperties: false,
+    },
+    handler: (f9, a) => f9.manageWebConnector(a.action, { name: a.name, url: a.url, description: a.description, trigger: a.trigger, agentApplication: a.agent_application, postMethod: a.post_method, executeInBrowser: a.execute_in_browser }),
+  },
+  {
+    name: 'manage_campaign_profile_filter',
+    description: 'Read or edit a campaign profile\'s CRM record-selection filter and dialing order. action "get" returns the current filter. "set_criteria" adds/removes filter conditions and sets grouping: add_criteria is an array of {compareOperator, leftValue, rightValue} (operators: Contains, Equals, NotEqual, Greater, Less, IsNull, StartsWith, …); grouping is {expression, type} where type is All, Any, or Custom (Custom uses a numbered boolean expression like "1 AND (2 OR 3)"). "set_order" manages order-by fields: add_order_by is an array of {fieldName, descending, rank}; remove_order_by is a list of field names.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['get', 'set_criteria', 'set_order'] },
+        profile_name: { type: 'string', description: 'Exact campaign profile name' },
+        grouping: { type: 'object', description: '{expression, type} (set_criteria)', additionalProperties: true },
+        add_criteria: { type: 'array', items: { type: 'object', additionalProperties: true }, description: '{compareOperator, leftValue, rightValue} conditions to add' },
+        remove_criteria: { type: 'array', items: { type: 'object', additionalProperties: true }, description: 'Conditions to remove' },
+        add_order_by: { type: 'array', items: { type: 'object', additionalProperties: true }, description: '{fieldName, descending, rank} order-by fields to add' },
+        remove_order_by: { type: 'array', items: { type: 'string' }, description: 'Order-by field names to remove' },
+      },
+      required: ['action', 'profile_name'],
+      additionalProperties: false,
+    },
+    handler: (f9, a) => {
+      if (a.action === 'get') return f9.getCampaignProfileFilter(a.profile_name);
+      if (a.action === 'set_criteria') return f9.modifyCampaignProfileCrmCriteria(a.profile_name, { grouping: a.grouping, addCriteria: a.add_criteria, removeCriteria: a.remove_criteria });
+      return f9.modifyCampaignProfileFilterOrder(a.profile_name, { addOrderByField: a.add_order_by, removeOrderByField: a.remove_order_by });
+    },
+  },
+  {
+    name: 'manage_ivr_script',
+    description: 'Create, modify, or delete an IVR script. Create makes an empty script by name (optionally pushing an xml_definition); modify replaces the script body with xml_definition (the full IVR XML, as returned by get_ivr_script); delete removes it. Editing IVR XML is advanced — fetch the current definition with get_ivr_script first.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['create', 'modify', 'delete'] },
+        name: { type: 'string', description: 'IVR script name' },
+        xml_definition: { type: 'string', description: 'Full IVR script XML (create optional, modify required)' },
+        description: { type: 'string' },
+      },
+      required: ['action', 'name'],
+      additionalProperties: false,
+    },
+    handler: (f9, a) => {
+      if (a.action === 'create') return f9.createIVRScript(a.name, a.xml_definition, a.description);
+      if (a.action === 'modify') return f9.modifyIVRScript(a.name, a.xml_definition, a.description);
+      return f9.deleteIVRScript(a.name);
+    },
+  },
+  {
+    name: 'manage_wav_prompt',
+    description: 'Create, modify, or delete a pre-recorded WAV voice prompt. Create/modify need name + wav_base64 (the base64-encoded WAV file; Five9 requires G.711 u-law, 8kHz, mono), optional language (default en-US) and description. Use manage_tts_prompt instead for text-to-speech prompts.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['create', 'modify', 'delete'] },
+        name: { type: 'string', description: 'Prompt name' },
+        wav_base64: { type: 'string', description: 'Base64-encoded WAV (G.711 u-law, 8kHz, mono)' },
+        language: { type: 'string', description: 'e.g. en-US' },
+        description: { type: 'string' },
+      },
+      required: ['action', 'name'],
+      additionalProperties: false,
+    },
+    handler: (f9, a) => f9.managePromptWav(a.action, { name: a.name, wavBase64: a.wav_base64, description: a.description, language: a.language }),
+  },
 ];
 
 export function toolDefs() {

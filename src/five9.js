@@ -130,6 +130,12 @@ const ELEMENT_ORDERS = {
   reasonCode: ['enabled', 'name', 'paidTime', 'shortcut', 'type'],
   speedDialNumber: ['code', 'description', 'number'],
   spd: ['code', 'description', 'number'],
+  // Tier-2 types
+  connector: ['addWorksheet', 'agentApplication', 'clearTriggerDispositions', 'constants', 'ctiWebServices', 'description', 'executeInBrowser', 'name', 'postConstants', 'postMethod', 'postVariables', 'startPageText', 'trigger', 'triggerDispositions', 'url', 'variables'],
+  grouping: ['expression', 'type'],
+  addCriteria: ['compareOperator', 'leftValue', 'rightValue'],
+  removeCriteria: ['compareOperator', 'leftValue', 'rightValue'],
+  addOrderByField: ['descending', 'fieldName', 'rank'],
 };
 
 // Serializes a plain JS value to XML under the given element name, applying
@@ -932,6 +938,122 @@ export class Five9Client {
   async getApiUsage() {
     const r = await this.admin('getCallCountersState', '');
     return toArray(r.return);
+  }
+
+  // ---- Tier-2: roles, web connectors, campaign-profile filters, IVR, WAV ----
+
+  // Grant/revoke user roles. modifyUser element order is userGeneralInfo,
+  // rolesToSet, rolesToRemove. The supervisor role requires >=1 viewable tab,
+  // so it defaults to a sensible view set unless permissions.supervisor is given.
+  async setUserRoles(userName, { add, remove, permissions } = {}) {
+    const gi = (await this.admin('getUserGeneralInfo', `<userName>${escapeXml(userName)}</userName>`)).return;
+    if (!gi) throw new Five9Error(`User "${userName}" not found.`);
+    delete gi.fullName;
+    const wantAdd = toArray(add).map((x) => String(x).toLowerCase());
+    const perms = permissions || {};
+    const permList = (list) => ({ permissions: toArray(list).map((t) => (typeof t === 'string' ? { type: t, value: true } : { type: t.type, value: t.value ?? true })) });
+    const rolesToSet = {};
+    if (wantAdd.includes('agent')) rolesToSet.agent = { alwaysRecorded: false, attachVmToEmail: false, sendEmailOnVm: false };
+    if (wantAdd.includes('admin')) rolesToSet.admin = permList(perms.admin);
+    if (wantAdd.includes('crmmanager')) rolesToSet.crmManager = permList(perms.crmManager);
+    if (wantAdd.includes('reporting')) rolesToSet.reporting = permList(perms.reporting);
+    if (wantAdd.includes('supervisor')) {
+      const tabs = (perms.supervisor && toArray(perms.supervisor).length) ? perms.supervisor : ['Agents', 'Campaigns', 'CallMonitoring'];
+      rolesToSet.supervisor = permList(tabs);
+    }
+    // rolesToRemove uses the userRoleType enum values.
+    const removeMap = { admin: 'DomainAdmin', domainadmin: 'DomainAdmin', agent: 'Agent', supervisor: 'Supervisor', reporting: 'Reporting', crmmanager: 'CrmManager' };
+    const rm = toArray(remove).map((x) => removeMap[String(x).toLowerCase()]).filter(Boolean);
+    if (!Object.keys(rolesToSet).length && !rm.length) throw new Five9Error('Provide at least one role to add or remove (agent, admin, supervisor, reporting, crmManager).');
+    const xml = xmlOf(gi, 'userGeneralInfo')
+      + (Object.keys(rolesToSet).length ? xmlOf(rolesToSet, 'rolesToSet') : '')
+      + rm.map((r) => `<rolesToRemove>${escapeXml(r)}</rolesToRemove>`).join('');
+    await this.admin('modifyUser', xml);
+    return { ok: true, user: userName, added: Object.keys(rolesToSet), removed: rm };
+  }
+
+  // Web connectors — create/delete. (modifyWebConnector's read-modify-write
+  // round-trip is finicky about nested keyValuePair fields; left out for now.)
+  async manageWebConnector(action, fields = {}) {
+    if (action === 'delete') {
+      if (!fields.name) throw new Five9Error('name is required.');
+      await this.admin('deleteWebConnector', `<name>${escapeXml(fields.name)}</name>`);
+      return { ok: true, deleted: fields.name };
+    }
+    if (action === 'create') {
+      if (!fields.name || !fields.url) throw new Five9Error('name and url are required.');
+      const connector = {
+        addWorksheet: fields.addWorksheet ?? false,
+        agentApplication: fields.agentApplication || 'EmbeddedBrowser',
+        description: fields.description,
+        executeInBrowser: fields.executeInBrowser ?? true,
+        name: fields.name,
+        postMethod: fields.postMethod ?? false,
+        trigger: fields.trigger || 'ManuallyStarted',
+        url: fields.url,
+      };
+      await this.admin('createWebConnector', xmlOf(connector, 'connector'));
+      return { ok: true, created: fields.name };
+    }
+    throw new Five9Error(`Unknown action "${action}" — use create or delete.`);
+  }
+
+  // Campaign-profile CRM filter criteria + result ordering.
+  async getCampaignProfileFilter(profileName) {
+    const r = await this.admin('getCampaignProfileFilter', `<profileName>${escapeXml(profileName)}</profileName>`);
+    return r.return || {};
+  }
+
+  async modifyCampaignProfileCrmCriteria(profileName, { grouping, addCriteria, removeCriteria } = {}) {
+    let xml = `<profileName>${escapeXml(profileName)}</profileName>`;
+    if (grouping) xml += xmlOf(grouping, 'grouping');
+    xml += toArray(addCriteria).map((c) => xmlOf(c, 'addCriteria')).join('');
+    xml += toArray(removeCriteria).map((c) => xmlOf(c, 'removeCriteria')).join('');
+    await this.admin('modifyCampaignProfileCrmCriteria', xml);
+    return { ok: true, profile: profileName };
+  }
+
+  async modifyCampaignProfileFilterOrder(campaignProfile, { addOrderByField, removeOrderByField } = {}) {
+    let xml = `<campaignProfile>${escapeXml(campaignProfile)}</campaignProfile>`;
+    xml += toArray(addOrderByField).map((f) => xmlOf(f, 'addOrderByField')).join('');
+    xml += toArray(removeOrderByField).map((f) => `<removeOrderByField>${escapeXml(f)}</removeOrderByField>`).join('');
+    await this.admin('modifyCampaignProfileFilterOrder', xml);
+    return { ok: true, profile: campaignProfile };
+  }
+
+  // IVR scripts — create (empty), modify (push xmlDefinition), delete. The
+  // caller supplies the full xmlDefinition string.
+  async createIVRScript(name, xmlDefinition, description) {
+    await this.admin('createIVRScript', `<name>${escapeXml(name)}</name>`);
+    if (xmlDefinition) await this.admin('modifyIVRScript', xmlOf({ description, name, xmlDefinition }, 'scriptDef'));
+    return { ok: true, created: name, definitionPushed: Boolean(xmlDefinition) };
+  }
+
+  async modifyIVRScript(name, xmlDefinition, description) {
+    if (!xmlDefinition) throw new Five9Error('xml_definition is required to modify an IVR script.');
+    await this.admin('modifyIVRScript', xmlOf({ description, name, xmlDefinition }, 'scriptDef'));
+    return { ok: true, modified: name };
+  }
+
+  async deleteIVRScript(name) {
+    await this.admin('deleteIVRScript', `<name>${escapeXml(name)}</name>`);
+    return { ok: true, deleted: name };
+  }
+
+  // Pre-recorded WAV prompts — create/modify/delete. wavBase64 is the
+  // base64-encoded WAV file (Five9 requires G.711 u-law, 8kHz, mono).
+  async managePromptWav(action, { name, wavBase64, description, language } = {}) {
+    if (action === 'delete') {
+      if (!name) throw new Five9Error('name is required.');
+      await this.admin('deletePrompt', `<promptName>${escapeXml(name)}</promptName>`);
+      return { ok: true, deleted: name };
+    }
+    if (!name || !wavBase64) throw new Five9Error('name and wav_base64 are required.');
+    const method = { create: 'addPromptWavInline', modify: 'modifyPromptWavInline' }[action];
+    if (!method) throw new Five9Error(`Unknown action "${action}" — use create, modify, or delete.`);
+    const prompt = { description, languages: language || 'en-US', name, type: 'PreRecorded' };
+    await this.admin(method, xmlOf(prompt, 'prompt') + `<wavFile>${escapeXml(wavBase64)}</wavFile>`);
+    return { ok: true, action, prompt: name };
   }
 
   // ---- Statistics (supervisor) API ----
