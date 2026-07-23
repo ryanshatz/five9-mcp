@@ -37,6 +37,24 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // Backoff schedule for 429/5xx retries: 1s, 2s, 4s, 8s, 8s…
 const backoffMs = (attempt) => [1000, 2000, 4000, 8000][Math.min(attempt, 3)];
 
+// Only ever send the bearer token to Five9's own hosts. `base_url` is a
+// caller-supplied override (and rest_call is reachable by the connected AI),
+// so an unrestricted host would let a prompt-injected call exfiltrate a live
+// Five9 access token to an attacker-controlled server. Allow https to
+// *.five9.net / *.five9.com only.
+export function assertFive9Host(base) {
+  let host;
+  try { host = new URL(base).hostname.toLowerCase(); } catch {
+    throw new Five9RestError(`Invalid base URL: ${base}`);
+  }
+  if (!/^https:/i.test(base)) {
+    throw new Five9RestError(`Refusing to send a Five9 token over non-HTTPS URL: ${base}`);
+  }
+  if (host !== 'five9.net' && host !== 'five9.com' && !host.endsWith('.five9.net') && !host.endsWith('.five9.com')) {
+    throw new Five9RestError(`Refusing to send a Five9 token to non-Five9 host "${host}". base_url must be a *.five9.net / *.five9.com endpoint.`);
+  }
+}
+
 export class Five9RestClient {
   // cfg: { restCredentials: { <name>: {key, secret} }, restConsumerKey,
   //        restConsumerSecret, restDomainId, restRegion, restBaseUrl } — see
@@ -106,8 +124,9 @@ export class Five9RestClient {
   // Authenticated REST call with rate-limit / retry handling. Returns
   // { status, etag, data } where data is parsed JSON (or text, or null).
   async request(method, path, { query, body, ifMatch, headers, credential = 'default', baseUrl } = {}) {
-    const token = await this.getToken(credential);
     const base = (baseUrl || this.baseUrl).replace(/\/+$/, '');
+    assertFive9Host(base); // fail before any token is fetched or sent
+    const token = await this.getToken(credential);
     let url = base + this._resolvePath(path);
     if (query && Object.keys(query).length) {
       const qs = new URLSearchParams(query).toString();
