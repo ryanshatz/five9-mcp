@@ -2,6 +2,7 @@
 // calls and returns plain JSON for the model.
 
 import { Five9Client } from './five9.js';
+import { Five9RestClient } from './five9rest.js';
 import { ABOUT } from './about.js';
 
 export const TOOLS = [
@@ -930,6 +931,129 @@ export const TOOLS = [
     },
     handler: (f9, a) => f9.managePromptWav(a.action, { name: a.name, wavBase64: a.wav_base64, description: a.description, language: a.language }),
   },
+
+  // ---- New Platform REST APIs (OAuth 2.0) — see five9rest.js ----
+  {
+    name: 'rest_check_connection',
+    description: 'Verify the Worker can obtain an OAuth 2.0 bearer token from the Five9 New Platform APIs. Confirms API Access Control is enabled and the Consumer Key/Secret are valid, and lists which named credentials are configured. Optional credential selects which one to test (default "default"; e.g. "data-tables"). Separate from check_connection, which tests the SOAP username/password.',
+    inputSchema: {
+      type: 'object',
+      properties: { credential: { type: 'string', description: 'Named credential to test (default "default"; e.g. "data-tables")' } },
+      additionalProperties: false,
+    },
+    rest: true,
+    handler: (r, a) => r.checkConnection(a.credential || 'default'),
+  },
+  {
+    name: 'rest_call',
+    description: 'Make an authenticated call to any Five9 New Platform REST API endpoint (OAuth bearer token handled automatically, with rate-limit/backoff and ETag/If-Match concurrency support). Use this to explore endpoints before typed tools exist. path is relative to the base URL, e.g. "/interactions/v1/domains/{domainId}/dispositions" ({domainId} is substituted from config). credential picks which API-family credential to use (default "default"; e.g. "data-tables"). base_url overrides the host for services on a different base. For writes, pass if_match with the ETag from a prior read.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        method: { type: 'string', enum: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'], description: 'HTTP method (default GET)' },
+        path: { type: 'string', description: 'Endpoint path relative to the base URL, e.g. "/interactions/v1/domains/{domainId}/dispositions". {domainId} is substituted automatically.' },
+        query: { type: 'object', description: 'Query-string parameters', additionalProperties: { type: 'string' } },
+        body: { type: 'object', description: 'JSON request body (for POST/PUT/PATCH)', additionalProperties: true },
+        if_match: { type: 'string', description: 'ETag value for optimistic-concurrency writes (sent as If-Match)' },
+        credential: { type: 'string', description: 'Named credential / API family to use (default "default"; e.g. "data-tables")' },
+        base_url: { type: 'string', description: 'Override the host base URL (for services hosted on a different base than the default)' },
+      },
+      required: ['path'],
+      additionalProperties: false,
+    },
+    rest: true,
+    handler: (r, a) => r.request(a.method || 'GET', a.path, { query: a.query, body: a.body, ifMatch: a.if_match, credential: a.credential || 'default', baseUrl: a.base_url }),
+  },
+  {
+    name: 'manage_circle',
+    description: 'Manage Five9 Circles via the OAuth New Platform API — there is NO SOAP equivalent, so this is the way to work with circles. action: "list" (paginated), "get" (by circle_id), "create" (name + optional fields), "delete" (by circle_id). Requires an OAuth API Access Control credential (Consumer Key/Secret) — run rest_check_connection first. This is NOT the SOAP username/password used by the other tools.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['list', 'get', 'create', 'delete'] },
+        circle_id: { type: 'string', description: 'Circle id (for get/delete)' },
+        name: { type: 'string', description: 'Circle name (for create)' },
+        fields: { type: 'object', description: 'Additional circle fields for create (e.g. useTags)', additionalProperties: true },
+        cursor: { type: 'string', description: 'Pagination cursor from a prior list (nextCursor)' },
+        limit: { type: 'number', description: 'Page size (default 100)' },
+      },
+      required: ['action'],
+      additionalProperties: false,
+    },
+    rest: true,
+    handler: (r, a) => {
+      if (a.action === 'list') return r.listCircles({ cursor: a.cursor, limit: a.limit });
+      if (a.action === 'get') return r.getCircle(a.circle_id);
+      if (a.action === 'create') return r.createCircle({ name: a.name, ...(a.fields || {}) });
+      return r.deleteCircle(a.circle_id);
+    },
+  },
+  {
+    name: 'list_np_prompts',
+    description: 'List voice prompts via the OAuth New Platform prompts API (paginated; returns richer objects than the SOAP list_prompts). Requires an OAuth API Access Control credential — see rest_check_connection. Pass cursor (from a prior nextCursor) to page.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        cursor: { type: 'string', description: 'Pagination cursor (nextCursor from a prior call)' },
+        limit: { type: 'number', description: 'Page size (default 100)' },
+      },
+      additionalProperties: false,
+    },
+    rest: true,
+    handler: (r, a) => r.listNpPrompts({ cursor: a.cursor, limit: a.limit }),
+  },
+  {
+    name: 'list_interaction_dispositions',
+    description: 'List call dispositions via the OAuth New Platform interactions API (paginated; richer fields than the SOAP list_dispositions). Pass disposition_id to fetch a single disposition (with its notification settings). Read-only. Requires an OAuth API Access Control credential — see rest_check_connection.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        disposition_id: { type: 'string', description: 'Fetch one disposition by id instead of listing' },
+        cursor: { type: 'string', description: 'Pagination cursor (nextCursor from a prior call)' },
+        limit: { type: 'number', description: 'Page size (default 100)' },
+      },
+      additionalProperties: false,
+    },
+    rest: true,
+    handler: (r, a) => (a.disposition_id ? r.getDisposition(a.disposition_id) : r.listDispositions({ cursor: a.cursor, limit: a.limit })),
+  },
+  {
+    name: 'get_domain_info',
+    description: 'Get New Platform domain metadata (domainId, name, tenant, and the domain\'s service endpoints) via the OAuth API. Requires an OAuth API Access Control credential — see rest_check_connection.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    rest: true,
+    handler: (r) => r.getDomainInfo(),
+  },
+  {
+    name: 'list_data_tables',
+    description: 'List Five9 Data Tables (structured lookup tables used in routing/IVR logic) via the OAuth New Platform API — no SOAP equivalent. Returns each table\'s id, name, description, and row count. Uses a SEPARATE "data-tables" credential (FIVE9_DT_CONSUMER_KEY/SECRET) in the "Data Tables access" API family — verify with rest_check_connection credential "data-tables". Paginated.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        cursor: { type: 'string', description: 'Pagination cursor (nextCursor from a prior call)' },
+        limit: { type: 'number', description: 'Page size (default 100)' },
+      },
+      additionalProperties: false,
+    },
+    rest: true,
+    handler: (r, a) => r.listDataTables({ cursor: a.cursor, limit: a.limit }),
+  },
+  {
+    name: 'get_data_table_rows',
+    description: 'Get the rows of a Five9 Data Table by table_id (paginated) via the OAuth New Platform API. Get table_id from list_data_tables. Read-only. Uses the "data-tables" credential.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        table_id: { type: 'string', description: 'Data table id (dataTableId from list_data_tables)' },
+        cursor: { type: 'string', description: 'Pagination cursor (nextCursor from a prior call)' },
+        limit: { type: 'number', description: 'Page size (default 100)' },
+      },
+      required: ['table_id'],
+      additionalProperties: false,
+    },
+    rest: true,
+    handler: (r, a) => r.getDataTableRows(a.table_id, { cursor: a.cursor, limit: a.limit }),
+  },
 ];
 
 export function toolDefs() {
@@ -939,6 +1063,7 @@ export function toolDefs() {
 export async function callTool(cfg, name, args) {
   const tool = TOOLS.find((t) => t.name === name);
   if (!tool) throw new Error(`Unknown tool: ${name}`);
+  if (tool.rest) return tool.handler(new Five9RestClient(cfg), args || {});
   const f9 = tool.five9 === false ? null : new Five9Client(cfg);
   return tool.handler(f9, args || {});
 }
