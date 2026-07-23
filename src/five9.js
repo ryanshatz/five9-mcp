@@ -251,7 +251,9 @@ export class Five9Client {
       `<cleanListBeforeUpdate>false</cleanListBeforeUpdate><crmAddMode>ADD_NEW</crmAddMode>` +
       `<crmUpdateMode>UPDATE_FIRST</crmUpdateMode><listAddMode>ADD_FIRST</listAddMode></listUpdateSettings>` +
       `<csvData>${escapeXml(csvLine)}</csvData>`);
-    return { submitted: true, list: listName, keyField: key, importIdentifier: r.return ?? null,
+    // addToListCsv returns { identifier } — flatten to the bare string so it
+    // can be passed straight to get_import_result (which wants a string id).
+    return { submitted: true, list: listName, keyField: key, importIdentifier: r.return?.identifier ?? r.return ?? null,
       note: 'Five9 processes list imports asynchronously; the record may take a moment to appear.' };
   }
 
@@ -349,8 +351,21 @@ export class Five9Client {
 
   async getImportResult(identifier, type = 'list') {
     const method = type === 'crm' ? 'getCrmImportResult' : 'getListImportResult';
-    const r = await this.admin(method, `<identifier><identifier>${escapeXml(identifier)}</identifier></identifier>`);
-    return r.return ?? null;
+    // Tolerate either the bare id string or the { identifier } object shape.
+    const id = (identifier && typeof identifier === 'object') ? identifier.identifier : identifier;
+    try {
+      const r = await this.admin(method, `<identifier><identifier>${escapeXml(id)}</identifier></identifier>`);
+      const result = r.return ?? null;
+      return (result && typeof result === 'object') ? { ready: true, ...result } : { ready: true, result };
+    } catch (e) {
+      // Five9 faults with "Result is not ready due to process is not complete"
+      // while the import is still running — surface that as a poll-again signal
+      // (mirrors getReportResult's { ready: false }) instead of a raw error.
+      if (/not ready|not complete|still (running|processing)|in progress/i.test(e.message)) {
+        return { ready: false, note: 'Import is still processing — call get_import_result again shortly.' };
+      }
+      throw e;
+    }
   }
 
   async createList(name) {
