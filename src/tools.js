@@ -655,7 +655,7 @@ export const TOOLS = [
   },
   {
     name: 'get_import_result',
-    description: 'Check the outcome of an asynchronous Five9 import started by add_record_to_list (type "list") or a CRM update (type "crm"). Pass the importIdentifier returned by that call.',
+    description: 'Check the outcome of an asynchronous Five9 import started by add_record_to_list (type "list") or a CRM update (type "crm"). Pass the importIdentifier returned by that call. Returns {ready: false} while Five9 is still processing — poll again shortly; when done, returns {ready: true} plus the import result (records inserted/updated, errors).',
     inputSchema: {
       type: 'object',
       properties: {
