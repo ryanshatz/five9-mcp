@@ -790,8 +790,9 @@ export class Five9Client {
   // ---- Prompts ----
 
   async getPrompts() {
+    // getPromptsResponse returns repeated <prompts> elements, not <return>.
     const r = await this.admin('getPrompts', '');
-    return toArray(r.return);
+    return toArray(r.prompts);
   }
 
   async manageTtsPrompt(action, fields) {
