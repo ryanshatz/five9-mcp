@@ -76,8 +76,7 @@ Open **`/setup`** on your new server. Enter your Five9 username, password, and r
 ```sh
 git clone https://github.com/ryanshatz/five9-mcp
 cd five9-mcp
-npx wrangler kv namespace create CONFIG   # paste the printed id into wrangler.toml
-npx wrangler deploy
+npx wrangler deploy   # provisions the CONFIG KV namespace on first deploy
 ```
 
 Then either use the `/setup` wizard, or skip it and manage credentials as Wrangler secrets (secrets override the wizard):
