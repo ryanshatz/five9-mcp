@@ -16,6 +16,11 @@ compatibility_date = "2026-07-01"
 [[kv_namespaces]]
 binding = "CONFIG"
 
+# Workers AI powers generate_prompt_audio (Deepgram Aura voices) with no
+# external TTS account or API key. The binding costs nothing to declare.
+[ai]
+binding = "AI"
+
 # Optional vars (override in [vars] or the dashboard):
 [vars]
 FIVE9_API_HOST = "api.five9.com"        # EU: api.eu.five9.com  CA: api.ca.five9.com

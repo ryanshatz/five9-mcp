@@ -1161,14 +1161,14 @@ export const TOOLS = [
   },
   {
     name: 'generate_prompt_audio',
-    description: 'Generate a voice prompt with a MODERN AI voice (ElevenLabs or OpenAI TTS) and upload it to Five9 as a WAV prompt (auto-converted to the required G.711 u-law 8kHz mono). Requires an ELEVENLABS_API_KEY or OPENAI_API_KEY secret on this server. Use instead of manage_tts_prompt when the prompt should sound human. The uploaded prompt can then be referenced from flows as {prompt_name}.',
+    description: 'Generate a voice prompt with a MODERN AI voice and upload it to Five9 as a WAV prompt (auto-converted to the required G.711 u-law 8kHz mono). Default provider is Cloudflare Workers AI (Deepgram Aura-2) built into this Worker: no external TTS account or API key needed, ~40 voices (default "luna"; try asteria, orion, athena, zeus). ElevenLabs/OpenAI are optional alternatives when their API-key secrets are set. Use instead of manage_tts_prompt when the prompt should sound human. The uploaded prompt can then be referenced from flows as {prompt_name}.',
     inputSchema: {
       type: 'object',
       properties: {
         name: { type: 'string', description: 'Prompt name to create/update on Five9' },
         text: { type: 'string', description: 'What the prompt says' },
-        provider: { type: 'string', enum: ['elevenlabs', 'openai'], description: 'TTS provider (default: whichever key is configured, elevenlabs first)' },
-        voice: { type: 'string', description: 'Voice id/name (default: ElevenLabs "Rachel" / OpenAI "nova")' },
+        provider: { type: 'string', enum: ['workers-ai', 'elevenlabs', 'openai'], description: 'TTS provider (default workers-ai, which needs no key)' },
+        voice: { type: 'string', description: 'Voice: Aura-2 speaker for workers-ai (default "luna"), or the provider-specific voice id for elevenlabs/openai' },
         model: { type: 'string', description: 'TTS model override' },
         description: { type: 'string', description: 'Prompt description in Five9' },
         language: { type: 'string', description: 'Prompt language tag (default en-US)' },
@@ -1178,9 +1178,9 @@ export const TOOLS = [
       additionalProperties: false,
     },
     handler: async (f9, a, cfg) => {
-      const provider = a.provider || (cfg?.ttsKeys?.elevenlabs ? 'elevenlabs' : 'openai');
+      const provider = a.provider || (cfg?.ai ? 'workers-ai' : (cfg?.ttsKeys?.elevenlabs ? 'elevenlabs' : (cfg?.ttsKeys?.openai ? 'openai' : 'workers-ai')));
       const apiKey = cfg?.ttsKeys?.[provider] || '';
-      const audio = await synthesizeUlawWav({ provider, apiKey, text: a.text, voice: a.voice, model: a.model });
+      const audio = await synthesizeUlawWav({ provider, apiKey, ai: cfg?.ai, text: a.text, voice: a.voice, model: a.model });
       const existing = (await f9.getPrompts()).some((p) => p.name === a.name);
       if (existing && !a.overwrite) {
         throw new Error(`Prompt "${a.name}" already exists. Pass overwrite: true to replace it.`);

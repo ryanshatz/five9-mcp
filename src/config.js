@@ -26,7 +26,9 @@ export async function loadConfig(env) {
     restBaseUrl: env.FIVE9_REST_BASE_URL || stored?.restBaseUrl || '',
     source: envManaged ? 'env' : (stored ? 'kv' : 'none'),
     hasKv: Boolean(env.CONFIG),
-    // BYO text-to-speech keys for generate_prompt_audio (env-only, never KV).
+    // TTS for generate_prompt_audio. Default is the Workers AI binding (no
+    // account, no key); ElevenLabs/OpenAI keys are optional extras (env-only).
+    ai: env.AI || null,
     ttsKeys: {
       elevenlabs: env.ELEVENLABS_API_KEY || '',
       openai: env.OPENAI_API_KEY || '',

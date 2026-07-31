@@ -178,9 +178,9 @@ The headline trick: describe a call flow in a paragraph and the AI designs it, s
 | 🟢 | `validate_ivr_flow` | Graph-check a flow spec + verify referenced skills/prompts exist on the domain |
 | 🟢 | `render_ivr_flow` | Render a flow spec **or an existing IVR script** as a Mermaid flowchart |
 | ✏️ | `build_ivr_script` | Compose the full script XML and create it on the domain (`dry_run` to inspect first) |
-| ✏️ | `generate_prompt_audio` | Voice a prompt with a modern AI voice (ElevenLabs / OpenAI, your API key) and upload it as a Five9-ready G.711 u-law WAV |
+| ✏️ | `generate_prompt_audio` | Voice a prompt with a modern AI voice and upload it as a Five9-ready G.711 u-law WAV. **No API key needed**: powered by Workers AI (Deepgram Aura, ~40 voices) built into your Worker |
 
-Recommended flow: validate → render (show the human!) → generate prompts → build → attach to an inbound campaign. `generate_prompt_audio` needs an `ELEVENLABS_API_KEY` or `OPENAI_API_KEY` secret; without one, flows still work with `{tts}` prompts (Five9's built-in robot voice).
+Recommended flow: validate → render (show the human!) → generate prompts → build → attach to an inbound campaign. `generate_prompt_audio` runs on **Cloudflare Workers AI** out of the box: no external TTS account, no API key, fractions of a cent per prompt billed to the Cloudflare account you already deployed to. ElevenLabs/OpenAI work too if you set their key secrets, and `{tts}` prompts (Five9's built-in robot voice) need nothing at all.
 
 </details>
 
@@ -410,7 +410,8 @@ FIVE9_USERNAME=apiuser@yourdomain
 FIVE9_PASSWORD=...
 MCP_AUTH_TOKEN=dev-local-token
 
-# Optional — AI voices for generate_prompt_audio (either or both)
+# Optional — external AI voice providers for generate_prompt_audio.
+# The default (Workers AI / Deepgram Aura) needs no key at all.
 ELEVENLABS_API_KEY=...
 OPENAI_API_KEY=...
 

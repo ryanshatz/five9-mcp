@@ -1,12 +1,19 @@
 // Modern-TTS to Five9 prompt audio. Five9 WAV prompts must be G.711 u-law,
-// 8kHz, mono; this module calls ElevenLabs or OpenAI with the operator's own
-// API key and returns a base64 WAV ready for managePromptWav. Zero
-// dependencies: u-law encoding, resampling, and the WAV container are done by
-// hand.
+// 8kHz, mono; this module synthesizes speech and returns a base64 WAV ready
+// for managePromptWav. Zero dependencies: u-law encoding, resampling, and the
+// WAV container are done by hand.
+//
+// Default provider is Cloudflare Workers AI (Deepgram Aura-2 via the [ai]
+// binding): no external TTS account or API key, and Aura speaks telephony
+// u-law 8kHz natively. ElevenLabs/OpenAI remain as optional BYO-key paths.
 
 export class TtsError extends Error {}
 
 const PROVIDERS = {
+  'workers-ai': {
+    defaultVoice: 'luna', // Aura-2 speakers: luna, asteria, orion, athena, zeus, ...
+    defaultModel: '@cf/deepgram/aura-2-en',
+  },
   elevenlabs: {
     defaultVoice: '21m00Tcm4TlvDq8ikWAM', // "Rachel", a public premade voice
     defaultModel: 'eleven_turbo_v2_5',
@@ -78,6 +85,17 @@ export function bytesToBase64(bytes) {
   return btoa(s);
 }
 
+async function ttsWorkersAi({ ai, text, voice, model }) {
+  // Aura-2 emits headerless u-law at 8kHz when asked; the binding returns a
+  // ReadableStream (or a byte buffer on some runtimes) of raw audio.
+  const out = await ai.run(model, { text, speaker: voice, encoding: 'mulaw', sample_rate: 8000, container: 'none' });
+  const bytes = out instanceof ReadableStream
+    ? new Uint8Array(await new Response(out).arrayBuffer())
+    : new Uint8Array(out instanceof ArrayBuffer ? out : (out?.buffer instanceof ArrayBuffer ? out.buffer : []));
+  if (!bytes.length) throw new TtsError('Workers AI returned no audio.');
+  return bytes;
+}
+
 async function ttsElevenLabs({ apiKey, text, voice, model }) {
   const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voice)}?output_format=ulaw_8000`, {
     method: 'POST',
@@ -99,15 +117,20 @@ async function ttsOpenAi({ apiKey, text, voice, model }) {
 }
 
 // Main entry: text -> base64 Five9-ready WAV.
-export async function synthesizeUlawWav({ provider, apiKey, text, voice, model }) {
+export async function synthesizeUlawWav({ provider, apiKey, ai, text, voice, model }) {
   const p = PROVIDERS[provider];
-  if (!p) throw new TtsError(`Unknown TTS provider "${provider}" (use elevenlabs or openai).`);
-  if (!apiKey) {
-    throw new TtsError(`No API key configured for ${provider}. Set the ${provider === 'elevenlabs' ? 'ELEVENLABS_API_KEY' : 'OPENAI_API_KEY'} secret on this Worker (or .dev.vars locally).`);
+  if (!p) throw new TtsError(`Unknown TTS provider "${provider}" (use workers-ai, elevenlabs, or openai).`);
+  if (provider === 'workers-ai' && !ai) {
+    throw new TtsError('The Workers AI binding is not available on this server. Redeploy with the [ai] binding in wrangler.toml (npx wrangler deploy), or pass provider elevenlabs/openai with an API key.');
+  }
+  if (provider !== 'workers-ai' && !apiKey) {
+    throw new TtsError(`No API key configured for ${provider}. Set the ${provider === 'elevenlabs' ? 'ELEVENLABS_API_KEY' : 'OPENAI_API_KEY'} secret on this Worker (or .dev.vars locally), or use the default workers-ai provider.`);
   }
   if (!text || !String(text).trim()) throw new TtsError('text is required.');
-  const args = { apiKey, text: String(text), voice: voice || p.defaultVoice, model: model || p.defaultModel };
-  const ulaw = provider === 'elevenlabs' ? await ttsElevenLabs(args) : await ttsOpenAi(args);
+  const args = { apiKey, ai, text: String(text), voice: voice || p.defaultVoice, model: model || p.defaultModel };
+  const ulaw = provider === 'workers-ai' ? await ttsWorkersAi(args)
+    : provider === 'elevenlabs' ? await ttsElevenLabs(args)
+    : await ttsOpenAi(args);
   if (!ulaw.length) throw new TtsError(`${provider} returned empty audio.`);
   const wav = ulawToWav(ulaw);
   return { wavBase64: bytesToBase64(wav), bytes: wav.length, approxSeconds: Math.round(ulaw.length / 800) / 10 };
