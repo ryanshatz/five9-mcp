@@ -26,6 +26,11 @@ export async function loadConfig(env) {
     restBaseUrl: env.FIVE9_REST_BASE_URL || stored?.restBaseUrl || '',
     source: envManaged ? 'env' : (stored ? 'kv' : 'none'),
     hasKv: Boolean(env.CONFIG),
+    // BYO text-to-speech keys for generate_prompt_audio (env-only, never KV).
+    ttsKeys: {
+      elevenlabs: env.ELEVENLABS_API_KEY || '',
+      openai: env.OPENAI_API_KEY || '',
+    },
   };
   cfg.configured = Boolean(cfg.username && cfg.password);
   cfg.restConfigured = Boolean(cfg.restConsumerKey && cfg.restConsumerSecret);

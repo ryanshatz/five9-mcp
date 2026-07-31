@@ -10,7 +10,7 @@ An open-source [MCP](https://modelcontextprotocol.io) server that connects Claud
 [![Runtime](https://img.shields.io/badge/Cloudflare-Workers-f38020?logo=cloudflare&logoColor=white)](https://workers.cloudflare.com)
 [![Dependencies](https://img.shields.io/badge/dependencies-0-16a34a)](package.json)
 [![MCP](https://img.shields.io/badge/protocol-MCP%20streamable%20HTTP-0ea5e9)](https://modelcontextprotocol.io)
-[![Tools](https://img.shields.io/badge/tools-73-8b5cf6)](#-the-toolbox)
+[![Tools](https://img.shields.io/badge/tools-77-8b5cf6)](#-the-toolbox)
 
 [Quick start](#-quick-start--no-terminal-needed) · [Connect Claude](#connect-claude-web--desktop) · [Connect ChatGPT](#connect-chatgpt) · [Tools](#-the-toolbox) · [Architecture](#%EF%B8%8F-architecture)
 
@@ -28,6 +28,7 @@ Ask your AI things like:
 > *"Onboard the new agent: create the user, assign the billing skill at level 2."* 🧑‍💼
 > *"Is 555-867-5309 on our DNC? Check before anyone dials it."* 🚫
 > *"Pull yesterday's Call Log report and summarize abandon rates."* 📈
+> *"Build me a complete IVR: option 1 scheduling, option 2 billing, after hours goes to voicemail."* 🧩
 
 Under the hood, this server speaks Five9's Configuration (admin) and Statistics (supervisor) **SOAP Web Services** — the APIs that still run Five9's admin surface — and exposes them as clean JSON tools over MCP streamable HTTP. Hand-rolled envelopes, a ~60-line XML parser, no npm packages. Every tool has been exercised against a live Five9 domain.
 
@@ -39,7 +40,7 @@ Deploy it and your Worker serves more than an API:
 |------|--------------|
 | `/` | A polished landing page: live server status, this setup guide, click-by-click AI connection walkthroughs, and the full tool catalog |
 | `/setup` | The **setup wizard** — enter Five9 credentials in your browser, get them verified live, receive your access key. No terminal, no secrets commands |
-| `/console` | An **interactive console** — paste your access key, pick any of the 73 grouped tools, fill a form generated from its schema, and run it against your live Five9 domain right from the browser |
+| `/console` | An **interactive console** — paste your access key, pick any of the 77 grouped tools, fill a form generated from its schema, and run it against your live Five9 domain right from the browser |
 | `/mcp` | The MCP endpoint itself (streamable HTTP, stateless) |
 | `/health` | JSON healthcheck |
 
@@ -163,9 +164,25 @@ curl -X POST https://<your-worker>.workers.dev/mcp \
 
 ## 🧰 The toolbox
 
-**73 tools.** 🟢 = read (always safe) · ✏️ = write (changes your domain — the server tells AIs to confirm with you first)
+**77 tools.** 🟢 = read (always safe) · ✏️ = write (changes your domain — the server tells AIs to confirm with you first)
 
-> 65 SOAP tools (username/password) + 8 OAuth New Platform REST tools (Consumer Key/Secret — see [OAuth New Platform APIs](#-oauth-new-platform-apis)).
+> 69 SOAP tools (username/password) + 8 OAuth New Platform REST tools (Consumer Key/Secret — see [OAuth New Platform APIs](#-oauth-new-platform-apis)).
+
+<details open>
+<summary><strong>🧩 IVR builder — whole call flows from plain English</strong></summary>
+
+The headline trick: describe a call flow in a paragraph and the AI designs it, shows you a **Mermaid diagram in chat**, and deploys a working IVR script. The model never freestyles Five9's IVR XML: it fills a constrained JSON flow spec (play / menu / business-hours / skill transfer / voicemail / hangup), a graph validator checks every branch and reference, and deterministic code emits designer-shaped XML (module wiring, prompt encoding, and field order all derived from real exported scripts).
+
+| | Tool | What it does |
+|--|------|--------------|
+| 🟢 | `validate_ivr_flow` | Graph-check a flow spec + verify referenced skills/prompts exist on the domain |
+| 🟢 | `render_ivr_flow` | Render a flow spec **or an existing IVR script** as a Mermaid flowchart |
+| ✏️ | `build_ivr_script` | Compose the full script XML and create it on the domain (`dry_run` to inspect first) |
+| ✏️ | `generate_prompt_audio` | Voice a prompt with a modern AI voice (ElevenLabs / OpenAI, your API key) and upload it as a Five9-ready G.711 u-law WAV |
+
+Recommended flow: validate → render (show the human!) → generate prompts → build → attach to an inbound campaign. `generate_prompt_audio` needs an `ELEVENLABS_API_KEY` or `OPENAI_API_KEY` secret; without one, flows still work with `{tts}` prompts (Five9's built-in robot voice).
+
+</details>
 
 <details open>
 <summary><strong>🔌 Connection & context</strong></summary>
@@ -365,6 +382,8 @@ Requests are stateless: every MCP call opens a fresh Five9 SOAP exchange with HT
 - List/CRM imports are **asynchronous**: the call returns an import identifier immediately; poll `get_import_result` for the outcome.
 - Contact record values come back wrapped (`<values><data>…</data></values>`); several responses return a single object where you'd expect a one-element array. `toArray()` in `five9.js` normalizes this.
 - Report time criteria order is `<end>` **before** `<start>` (JAXB alphabetical ordering).
+- IVR `xmlDefinition` is the visual designer's persisted format: modules are wired by GUID (`ascendants` / `singleDescendant` / `branches`), inline TTS text is stored as **gzip+base64** `speakElement` documents, and business-hours checks compare the `__DAY__` (SUN=1..SAT=7) and `__TIME__` (minutes since midnight) system variables. `ivr.js` encapsulates all of it.
+- `getPrompts` returns **no prompt ids** (name + type only). File-prompt references inside IVR XML are accepted with `id 0` + the prompt **name** and normalized server-side; the pushed script round-trips with the server-stamped `domainId` added.
 
 </details>
 
@@ -391,6 +410,10 @@ FIVE9_USERNAME=apiuser@yourdomain
 FIVE9_PASSWORD=...
 MCP_AUTH_TOKEN=dev-local-token
 
+# Optional — AI voices for generate_prompt_audio (either or both)
+ELEVENLABS_API_KEY=...
+OPENAI_API_KEY=...
+
 # Optional — OAuth New Platform REST tools (separate credential; see below)
 FIVE9_CONSUMER_KEY=...
 FIVE9_CONSUMER_SECRET=...
@@ -404,7 +427,7 @@ Then open `http://localhost:8787/console`, paste `dev-local-token`, and run tool
 
 ## 🤝 Contributing
 
-PRs welcome! The Five9 Config API has ~180 operations and this server wraps 58 of the most useful — the pattern in `five9.js` + `tools.js` is easy to extend (read the SOAP notes first and save yourself a fight with the WSDL). Please keep the zero-dependency constraint.
+PRs welcome! The Five9 Config API has ~180 operations and this server wraps 69 of the most useful — the pattern in `five9.js` + `tools.js` is easy to extend (read the SOAP notes first and save yourself a fight with the WSDL). Please keep the zero-dependency constraint.
 
 ## 📄 License
 

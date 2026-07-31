@@ -4,6 +4,8 @@
 import { Five9Client } from './five9.js';
 import { Five9RestClient } from './five9rest.js';
 import { ABOUT } from './about.js';
+import { validateFlow, collectFlowRefs, composeIvrXml, flowToMermaid, scriptXmlToMermaid, IVR_NODE_TYPES } from './ivr.js';
+import { synthesizeUlawWav } from './tts.js';
 
 export const TOOLS = [
   {
@@ -1054,6 +1056,141 @@ export const TOOLS = [
     rest: true,
     handler: (r, a) => r.getDataTableRows(a.table_id, { cursor: a.cursor, limit: a.limit }),
   },
+
+  // ---- IVR builder: compose whole call flows from a JSON spec ----
+  //
+  // The flow spec (documented in ivr.js and in the validate/build tool
+  // descriptions) is deliberately constrained: the model designs the flow,
+  // deterministic code guarantees the XML. Recommended workflow:
+  //   1. validate_ivr_flow -> fix anything it flags
+  //   2. render_ivr_flow -> SHOW the user the mermaid diagram, get approval
+  //   3. generate_prompt_audio for each AI-voiced prompt (optional)
+  //   4. build_ivr_script (dry_run first if you want to inspect the XML)
+  {
+    name: 'validate_ivr_flow',
+    description: 'Validate an IVR flow spec BEFORE building: graph checks (entry, wiring, digits, reachability) plus, by default, domain checks that every referenced skill and prompt exists. Flow spec: { entry, nodes: { key: node } } where node types are ' + IVR_NODE_TYPES.join(', ') + '. play: {prompt, next}. menu: {prompt, options: [{digit, label, next}], max_attempts?}. hours: {days: ["MON".."FRI"], open: "08:00", close: "17:00", during_hours, after_hours}. skill_transfer: {skills: [...], next (queue-timeout fallback), max_queue_seconds?}. voicemail: {skill}. hangup: {}. Prompts are {tts: "text"} (robot voice) or {prompt_name: "X"} (domain prompt, e.g. AI voice from generate_prompt_audio).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        flow: { type: 'object', description: 'The IVR flow spec' },
+        check_domain: { type: 'boolean', description: 'Also verify referenced skills/prompts exist on the domain (default true)' },
+      },
+      required: ['flow'],
+      additionalProperties: false,
+    },
+    handler: async (f9, a) => {
+      const result = validateFlow(a.flow);
+      const refs = collectFlowRefs(a.flow);
+      const out = { ...result, references: refs };
+      if (a.check_domain !== false && (refs.skills.length || refs.prompts.length)) {
+        const skills = new Set((await f9.getSkills('.*')).map((s) => String(s.name).toLowerCase()));
+        const prompts = new Set((await f9.getPrompts()).map((p) => String(p.name).toLowerCase()));
+        out.missing_skills = refs.skills.filter((s) => !skills.has(s.toLowerCase()));
+        out.missing_prompts = refs.prompts.filter((p) => !prompts.has(p.toLowerCase()));
+        if (out.missing_skills.length || out.missing_prompts.length) {
+          out.ok = false;
+          out.note = 'Create missing skills with manage_skill and missing prompts with generate_prompt_audio (or switch those prompts to {tts}).';
+        }
+      }
+      return out;
+    },
+  },
+  {
+    name: 'render_ivr_flow',
+    description: 'Render an IVR call flow as a Mermaid flowchart. Pass either flow (a flow spec, to preview BEFORE building) or script_name (an existing IVR script on the domain). ALWAYS show the returned mermaid to the user in a ```mermaid code fence so they can see the flow before you deploy it.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        flow: { type: 'object', description: 'Flow spec to render (see validate_ivr_flow)' },
+        script_name: { type: 'string', description: 'Existing IVR script name to render instead' },
+      },
+      additionalProperties: false,
+    },
+    handler: async (f9, a) => {
+      if (a.script_name) {
+        const script = await f9.getIVRScript(a.script_name);
+        return { script: a.script_name, mermaid: scriptXmlToMermaid(script.xmlDefinition) };
+      }
+      if (!a.flow) throw new Error('Pass flow or script_name.');
+      const check = validateFlow(a.flow);
+      if (!check.ok) return { ok: false, errors: check.errors, note: 'Fix the flow before rendering.' };
+      return { mermaid: flowToMermaid(a.flow), warnings: check.warnings };
+    },
+  },
+  {
+    name: 'build_ivr_script',
+    description: 'Build a COMPLETE Five9 IVR script from a flow spec (see validate_ivr_flow for the format) and create it on the domain. Validates the graph, resolves skill/prompt names to domain ids, and emits designer-shaped XML. Set dry_run true to get the XML back without touching the domain; set overwrite true to replace an existing script of the same name. After building, attach the script to an inbound campaign (create_campaign / modify_campaign).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'IVR script name' },
+        flow: { type: 'object', description: 'The IVR flow spec' },
+        description: { type: 'string', description: 'Script description shown in the Five9 admin' },
+        overwrite: { type: 'boolean', description: 'Replace the script if it already exists (default false)' },
+        dry_run: { type: 'boolean', description: 'Return the composed XML without creating anything (default false)' },
+      },
+      required: ['name', 'flow'],
+      additionalProperties: false,
+    },
+    handler: async (f9, a) => {
+      const refs = collectFlowRefs(a.flow);
+      const resolved = { skills: new Map(), prompts: new Map() };
+      if (refs.skills.length) {
+        for (const s of await f9.getSkills('.*')) resolved.skills.set(String(s.name).toLowerCase(), { id: s.id, name: s.name });
+      }
+      if (refs.prompts.length) {
+        // The SOAP prompt list carries no ids; Five9 accepts file-prompt refs
+        // with id 0 + the prompt NAME and normalizes ids server-side
+        // (verified by round-trip against a live domain).
+        for (const p of await f9.getPrompts()) {
+          resolved.prompts.set(String(p.name).toLowerCase(), { id: p.id ?? 0, name: p.name });
+        }
+      }
+      const { xml, warnings, moduleCount } = await composeIvrXml(a.flow, resolved);
+      const mermaid = flowToMermaid(a.flow);
+      if (a.dry_run) return { dry_run: true, moduleCount, warnings, mermaid, xml };
+      const existing = (await f9.getIVRScripts(a.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))).find((s) => s.name === a.name);
+      if (existing && !a.overwrite) {
+        throw new Error(`IVR script "${a.name}" already exists. Pass overwrite: true to replace it.`);
+      }
+      const result = existing
+        ? await f9.modifyIVRScript(a.name, xml, a.description)
+        : await f9.createIVRScript(a.name, xml, a.description);
+      return { ...result, moduleCount, warnings, mermaid, note: 'Show the mermaid diagram to the user. Attach the script to an inbound campaign to take calls.' };
+    },
+  },
+  {
+    name: 'generate_prompt_audio',
+    description: 'Generate a voice prompt with a MODERN AI voice (ElevenLabs or OpenAI TTS) and upload it to Five9 as a WAV prompt (auto-converted to the required G.711 u-law 8kHz mono). Requires an ELEVENLABS_API_KEY or OPENAI_API_KEY secret on this server. Use instead of manage_tts_prompt when the prompt should sound human. The uploaded prompt can then be referenced from flows as {prompt_name}.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Prompt name to create/update on Five9' },
+        text: { type: 'string', description: 'What the prompt says' },
+        provider: { type: 'string', enum: ['elevenlabs', 'openai'], description: 'TTS provider (default: whichever key is configured, elevenlabs first)' },
+        voice: { type: 'string', description: 'Voice id/name (default: ElevenLabs "Rachel" / OpenAI "nova")' },
+        model: { type: 'string', description: 'TTS model override' },
+        description: { type: 'string', description: 'Prompt description in Five9' },
+        language: { type: 'string', description: 'Prompt language tag (default en-US)' },
+        overwrite: { type: 'boolean', description: 'Update the prompt if it already exists (default false)' },
+      },
+      required: ['name', 'text'],
+      additionalProperties: false,
+    },
+    handler: async (f9, a, cfg) => {
+      const provider = a.provider || (cfg?.ttsKeys?.elevenlabs ? 'elevenlabs' : 'openai');
+      const apiKey = cfg?.ttsKeys?.[provider] || '';
+      const audio = await synthesizeUlawWav({ provider, apiKey, text: a.text, voice: a.voice, model: a.model });
+      const existing = (await f9.getPrompts()).some((p) => p.name === a.name);
+      if (existing && !a.overwrite) {
+        throw new Error(`Prompt "${a.name}" already exists. Pass overwrite: true to replace it.`);
+      }
+      const result = await f9.managePromptWav(existing ? 'modify' : 'create', {
+        name: a.name, wavBase64: audio.wavBase64, description: a.description, language: a.language,
+      });
+      return { ...result, provider, approxSeconds: audio.approxSeconds, bytes: audio.bytes };
+    },
+  },
 ];
 
 // ---- Web-UI display metadata (consumed by ui.js) ----
@@ -1073,6 +1210,7 @@ export const TOOL_GROUPS = [
   { name: 'Domain configuration', icon: '🏢', tools: ['list_dispositions', 'manage_disposition', 'list_ivr_scripts', 'get_ivr_script', 'manage_ivr_script', 'list_prompts', 'manage_tts_prompt', 'manage_wav_prompt', 'list_dnis', 'list_call_variables', 'manage_call_variable', 'list_web_connectors', 'manage_web_connector', 'manage_speed_dial', 'get_vcc_configuration'] },
   { name: 'Reporting & real-time', icon: '📈', tools: ['run_report', 'get_report_result', 'get_realtime_stats'] },
   { name: 'New Platform (REST)', icon: '🆕', tools: ['rest_call', 'manage_circle', 'list_np_prompts', 'list_interaction_dispositions', 'get_domain_info', 'list_data_tables', 'get_data_table_rows'] },
+  { name: 'IVR builder', icon: '🧩', tools: ['validate_ivr_flow', 'render_ivr_flow', 'build_ivr_script', 'generate_prompt_audio'] },
 ];
 
 export const WRITE_TOOLS = new Set([
@@ -1085,7 +1223,7 @@ export const WRITE_TOOLS = new Set([
   'delete_user', 'manage_disposition', 'manage_contact_field', 'delete_contact',
   'manage_tts_prompt', 'manage_wav_prompt', 'manage_ivr_script', 'manage_agent_group',
   'manage_call_variable', 'manage_web_connector', 'manage_speed_dial', 'manage_reason_code',
-  'manage_circle', 'rest_call',
+  'manage_circle', 'rest_call', 'build_ivr_script', 'generate_prompt_audio',
 ]);
 
 export function toolDefs() {
@@ -1095,7 +1233,7 @@ export function toolDefs() {
 export async function callTool(cfg, name, args) {
   const tool = TOOLS.find((t) => t.name === name);
   if (!tool) throw new Error(`Unknown tool: ${name}`);
-  if (tool.rest) return tool.handler(new Five9RestClient(cfg), args || {});
+  if (tool.rest) return tool.handler(new Five9RestClient(cfg), args || {}, cfg);
   const f9 = tool.five9 === false ? null : new Five9Client(cfg);
-  return tool.handler(f9, args || {});
+  return tool.handler(f9, args || {}, cfg);
 }
