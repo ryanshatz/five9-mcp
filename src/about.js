@@ -33,7 +33,28 @@ in real time, manage campaigns and dialing lists, look up contacts, and pull any
   stale numbers.
 - Reports can take a while — run_report, then poll get_report_result.
 - If tools fail with auth errors, suggest check_connection and verifying the Worker's
-  Five9 secrets.`;
+  Five9 secrets.
+
+## Building IVRs (the playbook)
+
+- The full go-live chain, in order: validate_ivr_flow -> render_ivr_flow (show the
+  user the Mermaid diagram and get ONE approval) -> generate_prompt_audio per prompt ->
+  build_ivr_script -> create_campaign (type inbound, ivr_script set) ->
+  manage_campaign_dnis add (pick a number from list_dnis with select_unassigned) ->
+  control_campaign start. Once the user approves the diagram, run the whole chain
+  without stopping to re-confirm each step.
+- Business hours: Five9 evaluates the hours node (__DAY__/__TIME__) in the DOMAIN's
+  default time zone, and the SOAP API does not expose that setting, so do not spend
+  tool calls trying to derive it. For outboundANI, treat domain time as US Central
+  (per the operator). State the assumption in one line; if exact hours are critical,
+  suggest a single test call near the boundary.
+- Voice prompts: generate_prompt_audio needs no API key (Workers AI, Deepgram Aura-2).
+  "luna" (default) and "asteria" both read warm and professional. Prefix prompt names
+  per script (e.g. MAIN_IVR_GREETING) so they group together in the prompt list.
+- Make message paths feel finished: play a short "sorry we missed you, please leave a
+  message after the tone" prompt BEFORE the voicemail node, route after-hours callers
+  through a "we're closed" message first, and point skill_transfer next at that same
+  message path so queue timeouts land softly too.`;
 
 // Short version for the MCP initialize handshake.
-export const INSTRUCTIONS = `MCP server for the Five9 contact center domain outboundANI, operated by Ryan Shatzkamer (Director, Technical Services at outboundIQ, 5x Five9 certified). Reads are safe; confirm with the user before control_campaign or add_record_to_list since those affect live dialing. Call the "about" tool for full operator context.`;
+export const INSTRUCTIONS = `MCP server for the Five9 contact center domain outboundANI, operated by Ryan Shatzkamer (Director, Technical Services at outboundIQ, 5x Five9 certified). Reads are safe; confirm with the user before control_campaign or add_record_to_list since those affect live dialing. It can also BUILD complete IVRs from a flow spec (diagram first, then deploy) with AI-voiced prompts that need no API key. Call the "about" tool for full operator context and the IVR playbook.`;

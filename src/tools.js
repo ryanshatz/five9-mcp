@@ -1082,6 +1082,9 @@ export const TOOLS = [
       const result = validateFlow(a.flow);
       const refs = collectFlowRefs(a.flow);
       const out = { ...result, references: refs };
+      if (Object.values(a.flow?.nodes || {}).some((n) => n?.type === 'hours')) {
+        out.timezone_note = 'hours nodes compare __DAY__/__TIME__ in the DOMAIN default time zone, which the SOAP API does not expose. State your assumption to the user in one line instead of spending calls trying to derive it (see the about tool for this domain\'s time zone).';
+      }
       if (a.check_domain !== false && (refs.skills.length || refs.prompts.length)) {
         const skills = new Set((await f9.getSkills('.*')).map((s) => String(s.name).toLowerCase()));
         const prompts = new Set((await f9.getPrompts()).map((p) => String(p.name).toLowerCase()));
@@ -1156,7 +1159,7 @@ export const TOOLS = [
       const result = existing
         ? await f9.modifyIVRScript(a.name, xml, a.description)
         : await f9.createIVRScript(a.name, xml, a.description);
-      return { ...result, moduleCount, warnings, mermaid, note: 'Show the mermaid diagram to the user. Attach the script to an inbound campaign to take calls.' };
+      return { ...result, moduleCount, warnings, mermaid, note: 'Show the mermaid diagram to the user. Go-live chain: create_campaign (type inbound, ivr_script set) -> manage_campaign_dnis add (pick from list_dnis select_unassigned) -> control_campaign start.' };
     },
   },
   {
